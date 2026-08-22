@@ -50,6 +50,45 @@ def _compute_sma(prices: pd.Series, window: int) -> float | None:
     return float(sma) if pd.notna(sma) else None
 
 
+def _extract_symbol_history(
+    history: pd.DataFrame,
+    symbol: str,
+    single_ticker: bool,
+) -> pd.DataFrame | None:
+    """
+    Extract per-symbol DataFrame from yfinance's batch download result.
+
+    yfinance returns different shapes depending on the number of tickers:
+    - Single ticker: DataFrame with columns [Open, High, Low, Close, Volume].
+    - Multiple tickers with group_by='ticker': DataFrame with MultiIndex columns
+      where the top level is the ticker symbol.
+
+    Returns None if the symbol is not present in the batch result.
+    """
+    try:
+        if single_ticker:
+            return history
+
+        # Multi-ticker: history[symbol] returns a DataFrame slice
+        if symbol not in history.columns.get_level_values(0):
+            logger.warning("ticker not in price history batch", extra={"symbol": symbol})
+            return None
+
+        symbol_df = history[symbol]
+        if not isinstance(symbol_df, pd.DataFrame):
+            logger.warning("unexpected type for symbol history", extra={"symbol": symbol})
+            return None
+
+        return symbol_df
+
+    except (KeyError, AttributeError) as exc:
+        logger.warning(
+            "failed to extract symbol history",
+            extra={"symbol": symbol, "error": str(exc)},
+        )
+        return None
+
+
 def _fetch_single(symbol: str, price_history: pd.DataFrame) -> Ticker | None:
     """
     Fetch fundamentals for a single ticker and combine with pre-fetched price history.
@@ -64,8 +103,7 @@ def _fetch_single(symbol: str, price_history: pd.DataFrame) -> Ticker | None:
             logger.warning("skipping ticker: no info returned", extra={"symbol": symbol})
             return None
 
-        # Extract close prices for SMAs
-        close = price_history["Close"] if isinstance(price_history, pd.Series) else price_history["Close"]
+        close = price_history["Close"]
         if close.empty:
             logger.warning("skipping ticker: empty price history", extra={"symbol": symbol})
             return None
@@ -114,9 +152,9 @@ def fetch_universe(symbols: list[str], max_workers: int = 10) -> list[Ticker]:
 
     logger.info("starting universe fetch", extra={"symbol_count": len(symbols)})
 
-    # 1) Batch download 250 days of price history (single HTTP call)
+    # 1) Batch download ~300 days of price history (single HTTP call, buffer for SMA200)
     end = datetime.now()
-    start = end - timedelta(days=300)  # buffer for weekends/holidays
+    start = end - timedelta(days=300)
 
     logger.info("downloading price history batch")
     history = yf.download(
@@ -129,24 +167,27 @@ def fetch_universe(symbols: list[str], max_workers: int = 10) -> list[Ticker]:
         threads=True,
     )
 
-    if history.empty:
-        logger.error("batch price download returned empty DataFrame")
+    if history is None or history.empty:
+        logger.error("batch price download returned empty or None DataFrame")
         return []
 
     # 2) Parallel fetch of fundamentals + assembly
     tickers: list[Ticker] = []
+    single_ticker = len(symbols) == 1
 
     with cf.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {}
+        futures: dict[cf.Future[Ticker | None], str] = {}
+
         for symbol in symbols:
-            try:
-                symbol_history = history[symbol] if len(symbols) > 1 else history
-                if symbol_history["Close"].dropna().empty:
-                    continue
-                futures[executor.submit(_fetch_single, symbol, symbol_history)] = symbol
-            except KeyError:
-                logger.warning("ticker not in price history", extra={"symbol": symbol})
+            symbol_history = _extract_symbol_history(history, symbol, single_ticker)
+            if symbol_history is None:
                 continue
+
+            if symbol_history["Close"].dropna().empty:
+                logger.warning("ticker has no close prices", extra={"symbol": symbol})
+                continue
+
+            futures[executor.submit(_fetch_single, symbol, symbol_history)] = symbol
 
         for future in cf.as_completed(futures):
             result = future.result()

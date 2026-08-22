@@ -83,8 +83,10 @@ def persist_to_dynamodb(briefing: DailyBriefing, s3_key: str, config: Config) ->
     """
     Persist briefing metadata to DynamoDB for history and quick lookups.
     """
-    ddb = boto3.resource("dynamodb", region_name=config.aws_region)
-    table = ddb.Table(config.dynamodb_table)
+    # boto3.resource returns a generic type without full type hints;
+    # runtime works correctly. Ignoring Pylance's attribute check.
+    ddb = boto3.resource("dynamodb", region_name=config.aws_region)  # type: ignore[assignment]
+    table = ddb.Table(config.dynamodb_table)  # type: ignore[attr-defined]
 
     item = {
         "run_date": briefing.run_date,
