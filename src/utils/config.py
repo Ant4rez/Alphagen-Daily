@@ -53,6 +53,6 @@ def load_config() -> Config:
         max_price=float(os.environ.get("MAX_PRICE", "50.0")),
         require_sma_uptrend=os.environ.get("REQUIRE_SMA_UPTREND", "true").lower() == "true",
 
-        max_workers=int(os.environ.get("MAX_WORKERS", "10")),
+        max_workers=int(os.environ.get("MAX_WORKERS", "5")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
     )

@@ -2,16 +2,15 @@
 Fetcher — downloads market data + fundamentals from yfinance.
 
 Design decisions:
-- Uses yfinance.download() for batch price history (single HTTP call).
-- Falls back to per-ticker fetching for fundamentals (yfinance limitation).
-- Uses ThreadPoolExecutor to parallelize fundamental fetches.
-- Silently skips tickers that fail to fetch (delisted, symbol change, etc)
-  rather than crashing the whole run.
+- Uses yfinance.download() batch for price history.
+- Fetches fundamentals ticker-by-ticker serially with a small delay to
+  respect Yahoo's implicit rate limits (works on datacenter IPs like Lambda).
+- Silently skips tickers that fail rather than crashing the whole run.
 """
 
 from __future__ import annotations
 
-import concurrent.futures as cf
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -23,9 +22,11 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Small delay between per-ticker fundamentals calls to avoid rate limiting
+_INTER_REQUEST_DELAY_SECONDS = 0.35
+
 
 def _safe_get(info: dict[str, Any], key: str, default: Any = None) -> Any:
-    """Safely extract a key from yfinance info dict."""
     value = info.get(key, default)
     if value == "" or value is None:
         return default
@@ -33,7 +34,6 @@ def _safe_get(info: dict[str, Any], key: str, default: Any = None) -> Any:
 
 
 def _to_percent(value: Any) -> float | None:
-    """Convert a fraction from yfinance (e.g. 0.15) to percentage (15.0)."""
     if value is None:
         return None
     try:
@@ -43,7 +43,6 @@ def _to_percent(value: Any) -> float | None:
 
 
 def _compute_sma(prices: pd.Series, window: int) -> float | None:
-    """Return the most recent SMA value for the given window, or None if insufficient data."""
     if len(prices) < window:
         return None
     sma = prices.rolling(window=window).mean().iloc[-1]
@@ -55,21 +54,10 @@ def _extract_symbol_history(
     symbol: str,
     single_ticker: bool,
 ) -> pd.DataFrame | None:
-    """
-    Extract per-symbol DataFrame from yfinance's batch download result.
-
-    yfinance returns different shapes depending on the number of tickers:
-    - Single ticker: DataFrame with columns [Open, High, Low, Close, Volume].
-    - Multiple tickers with group_by='ticker': DataFrame with MultiIndex columns
-      where the top level is the ticker symbol.
-
-    Returns None if the symbol is not present in the batch result.
-    """
     try:
         if single_ticker:
             return history
 
-        # Multi-ticker: history[symbol] returns a DataFrame slice
         if symbol not in history.columns.get_level_values(0):
             logger.warning("ticker not in price history batch", extra={"symbol": symbol})
             return None
@@ -90,11 +78,6 @@ def _extract_symbol_history(
 
 
 def _fetch_single(symbol: str, price_history: pd.DataFrame) -> Ticker | None:
-    """
-    Fetch fundamentals for a single ticker and combine with pre-fetched price history.
-
-    Returns None if fetch fails at any critical step.
-    """
     try:
         yf_ticker = yf.Ticker(symbol)
         info = yf_ticker.info
@@ -110,7 +93,7 @@ def _fetch_single(symbol: str, price_history: pd.DataFrame) -> Ticker | None:
 
         current_price = float(close.iloc[-1])
 
-        ticker = Ticker(
+        return Ticker(
             symbol=symbol,
             company_name=_safe_get(info, "longName", symbol),
             sector=_safe_get(info, "sector"),
@@ -126,8 +109,6 @@ def _fetch_single(symbol: str, price_history: pd.DataFrame) -> Ticker | None:
             pe_ratio=_safe_get(info, "trailingPE"),
         )
 
-        return ticker
-
     except Exception as exc:
         logger.warning(
             "ticker fetch failed",
@@ -136,23 +117,20 @@ def _fetch_single(symbol: str, price_history: pd.DataFrame) -> Ticker | None:
         return None
 
 
-def fetch_universe(symbols: list[str], max_workers: int = 10) -> list[Ticker]:
+def fetch_universe(symbols: list[str], max_workers: int = 1) -> list[Ticker]:
     """
     Download price history + fundamentals for a list of symbols.
 
-    Args:
-        symbols: list of ticker symbols (e.g. ["NVDA", "MSFT"]).
-        max_workers: parallelism for fundamentals fetching.
-
-    Returns:
-        List of Ticker objects (skipping any that failed to fetch).
+    Note: max_workers is kept for API compatibility but ignored — we fetch
+    fundamentals serially with a small delay to avoid Yahoo rate limiting
+    from datacenter IPs.
     """
     if not symbols:
         return []
 
     logger.info("starting universe fetch", extra={"symbol_count": len(symbols)})
 
-    # 1) Batch download ~300 days of price history (single HTTP call, buffer for SMA200)
+    # 1) Batch download price history (single HTTP call)
     end = datetime.now()
     start = end - timedelta(days=300)
 
@@ -164,35 +142,33 @@ def fetch_universe(symbols: list[str], max_workers: int = 10) -> list[Ticker]:
         progress=False,
         group_by="ticker",
         auto_adjust=True,
-        threads=True,
+        threads=False,
     )
 
     if history is None or history.empty:
         logger.error("batch price download returned empty or None DataFrame")
         return []
 
-    # 2) Parallel fetch of fundamentals + assembly
+    # 2) Serial fetch of fundamentals with delay
     tickers: list[Ticker] = []
     single_ticker = len(symbols) == 1
 
-    with cf.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures: dict[cf.Future[Ticker | None], str] = {}
+    for i, symbol in enumerate(symbols):
+        symbol_history = _extract_symbol_history(history, symbol, single_ticker)
+        if symbol_history is None:
+            continue
 
-        for symbol in symbols:
-            symbol_history = _extract_symbol_history(history, symbol, single_ticker)
-            if symbol_history is None:
-                continue
+        if symbol_history["Close"].dropna().empty:
+            logger.warning("ticker has no close prices", extra={"symbol": symbol})
+            continue
 
-            if symbol_history["Close"].dropna().empty:
-                logger.warning("ticker has no close prices", extra={"symbol": symbol})
-                continue
+        result = _fetch_single(symbol, symbol_history)
+        if result is not None:
+            tickers.append(result)
 
-            futures[executor.submit(_fetch_single, symbol, symbol_history)] = symbol
-
-        for future in cf.as_completed(futures):
-            result = future.result()
-            if result is not None:
-                tickers.append(result)
+        # Small delay between requests to be gentle with Yahoo
+        if i < len(symbols) - 1:
+            time.sleep(_INTER_REQUEST_DELAY_SECONDS)
 
     logger.info(
         "universe fetch complete",

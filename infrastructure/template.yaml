@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AlphaGen Daily — always-on AWS agent that screens AI-related US stocks
+  using CANSLIM-inspired criteria and generates daily briefings via Bedrock.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  BedrockModelId:
+    Type: String
+    Default: amazon.nova-lite-v1:0
+    Description: Bedrock model ID for the analyzer
+  ScheduleExpression:
+    Type: String
+    Default: cron(0 12 ? * MON-FRI *)
+    Description: EventBridge cron for the screener (UTC). Default 12:00 UTC weekdays = 09:00 BRT.
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 1536
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        LOG_LEVEL: INFO
+        S3_BUCKET: !Ref BriefingsBucket
+        DYNAMODB_TABLE: !Ref HistoryTable
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        MAX_PRICE: "500"
+        MIN_EPS_GROWTH_QOQ: "10"
+        MIN_EPS_GROWTH_YOY: "15"
+        MAX_WORKERS: "5"
+
+Resources:
+
+  # ---------- Storage ----------
+  BriefingsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "alphagen-daily-briefings-${AWS::AccountId}-${Environment}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  HistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "alphagen-daily-history-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: run_date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: run_date
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ---------- Screener Lambda (scheduled) ----------
+  ScreenerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "alphagen-daily-screener-${Environment}"
+      PackageType: Image
+      ImageConfig:
+        Command: ["src.handler.lambda_handler"]
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref BriefingsBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref HistoryTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:Converse
+              Resource: "*"
+      Events:
+        Daily:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref ScheduleExpression
+            Description: Daily screener run (weekdays before US market open)
+            Enabled: true
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ..
+      DockerTag: screener-latest
+
+  # ---------- API Lambda (HTTP endpoints) ----------
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "alphagen-daily-api-${Environment}"
+      PackageType: Image
+      ImageConfig:
+        Command: ["src.api_handler.lambda_handler"]
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref BriefingsBucket
+        - DynamoDBReadPolicy:
+            TableName: !Ref HistoryTable
+      Events:
+        Today:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: GET
+            Path: /today
+        History:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: GET
+            Path: /history/{date}
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ..
+      DockerTag: api-latest
+
+  # ---------- HTTP API ----------
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowMethods: [GET, OPTIONS]
+        AllowHeaders: ["*"]
+        AllowOrigins: ["*"]
+
+Outputs:
+  BucketName:
+    Description: S3 bucket for daily briefings
+    Value: !Ref BriefingsBucket
+
+  TableName:
+    Description: DynamoDB table for briefing history
+    Value: !Ref HistoryTable
+
+  ApiEndpoint:
+    Description: Public API base URL
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  TodayEndpoint:
+    Description: URL for the latest briefing
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/today"

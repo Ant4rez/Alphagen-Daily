@@ -1,0 +1,5 @@
+{
+  "Environment": "dev",
+  "BedrockModelId": "amazon.nova-lite-v1:0",
+  "ScheduleExpression": "cron(0 12 ? * MON-FRI *)"
+}

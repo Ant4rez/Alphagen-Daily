@@ -1,0 +1,33 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# AWS SAM
+.aws-sam/
+infrastructure/
+
+# IDEs
+.idea/
+.vscode/
+.DS_Store
+
+# Tests + dev
+tests/
+requirements-dev.txt
+Makefile
+docs/
+README.md
+ARCHITECTURE.md
+LICENSE
+
+# Data
+data/
+*.csv
+!tests/fixtures/*.csv

@@ -1,0 +1,18 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "alphagen-daily"
+region = "us-east-1"
+
+[default.deploy.parameters]
+resolve_s3 = true
+resolve_image_repos = true
+s3_prefix = "alphagen-daily"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = []
+parameter_overrides = "Environment=\"dev\" BedrockModelId=\"amazon.nova-lite-v1:0\" ScheduleExpression=\"cron(0 12 ? * MON-FRI *)\""
+
+[default.sync.parameters]
+watch = true
