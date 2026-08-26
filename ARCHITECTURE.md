@@ -51,11 +51,13 @@ flowchart LR
         F --> S[screener]
         S --> A[analyzer]
         A --> P[storage]
+        P --> N[notifier]
     end
 
     subgraph External["Serviços externos"]
         YF[Yahoo Finance API<br/>via yfinance]
         BR[Amazon Bedrock<br/>us.amazon.nova-lite-v1:0]
+        SES[Amazon SES<br/>SendEmail]
     end
 
     subgraph Storage["Camada de storage"]
@@ -77,6 +79,7 @@ flowchart LR
     A --> BR
     P --> S3
     P --> DDB
+    N --> SES
 
     Pipeline -.logs JSON.-> CW[CloudWatch Logs]
     API -.logs JSON.-> CW
@@ -157,6 +160,27 @@ Content-Type `application/json`, encoding UTF-8, indent 2 para leitura humana.
 
 Conversão `float → Decimal` recursiva em `_to_dynamodb_safe` para compatibilidade com o tipo Number do DynamoDB.
 
+### 3.6 Notificação (`src/notifier.py`)
+
+Estágio final opcional, envolvido em try/except próprio no `handler.py` para que falha de email nunca falhe o run (o briefing já está persistido).
+
+Entrada: `DailyBriefing` + `Config`.
+Saída: nenhuma (efeito colateral: email enviado, ou log de falha).
+
+Gate por `config.notify_enabled`: se falso, sai imediatamente com log INFO. Se sender ou recipients vazios (mesmo com notify enabled), log WARNING e sai — falha ruidosa em vez de silenciosa.
+
+Renderiza duas versões da mesma mensagem:
+- **HTML rich** com inline styles (obrigatório em email: `<style>` tag é removida por Gmail/Yahoo)
+- **Plain text** de fallback
+
+Ambas enviadas juntas em `Message.Body.Html` + `Message.Body.Text` — o padrão `multipart/alternative` do SMTP. Cliente de email escolhe qual renderizar.
+
+Layout HTML: container 600px (padrão de facto pra mobile+desktop), header escuro com data + contadores, uma seção por ticker aprovado com preço/EPS/setor/tese/risco, footer com disclaimer legal e model_id do Bedrock. Tabelas aninhadas em vez de flexbox porque Outlook desktop usa engine do Word que não faz flexbox.
+
+Assunto do email: `AlphaGen Daily — {run_date}: {approved_count} aprovados`, com contadores no próprio subject line para leitura rápida no preview do inbox.
+
+Chamada SES via `bedrock-runtime` boto3 client (`ses.send_email`), region da config. Falha (`ClientError`) é logada como ERROR e engolida — retorna sem propagar.
+
 ---
 
 ## 4. API HTTP (Lambda api)
@@ -193,12 +217,13 @@ Cada módulo tem uma única responsabilidade e um contrato claro de entrada/saí
 
 | Módulo | Responsabilidade única | Depende de |
 |---|---|---|
-| `handler.py` | Orquestrar os 5 estágios do pipeline batch | fetcher, screener, analyzer, storage, config, universe |
+| `handler.py` | Orquestrar os 6 estágios do pipeline batch | fetcher, screener, analyzer, storage, notifier, config, universe |
 | `api_handler.py` | Servir os JSONs persistidos via HTTP | boto3 (S3), config |
 | `fetcher.py` | Baixar preços e fundamentais, montar `Ticker` | yfinance, pandas, models |
 | `screener.py` | Aplicar filtros CANSLIM sobre lista de `Ticker` | models, config |
 | `analyzer.py` | Chamar Bedrock, parsear JSON, montar `ScreeningResult` | boto3 (bedrock-runtime), models, config |
 | `storage.py` | Escrever S3 e DynamoDB | boto3 (s3, dynamodb), models, config |
+| `notifier.py` | Renderizar HTML+text e enviar email via SES | boto3 (ses), models, config |
 | `models/ticker.py` | Snapshot imutável de um ativo | (só stdlib) |
 | `models/screening_result.py` | Resultado enriquecido + agregação em `DailyBriefing` | ticker |
 | `universe/ai_tickers.py` | Universo curado por vertical + função de filtro | (só stdlib) |
@@ -315,6 +340,9 @@ Toda configuração é lida em `src/utils/config.py:load_config()` a partir de v
 | `MIN_EPS_GROWTH_YOY` | `25.0` | `15` | Threshold EPS Y/Y em % |
 | `MAX_PRICE` | `50.0` | `500` | Preço máximo em USD |
 | `REQUIRE_SMA_UPTREND` | `true` | (usa default) | Aplicar filtro de SMA uptrend |
+| `NOTIFY_ENABLED` | `false` | `true` | Kill switch mestre pra envio de email |
+| `SES_SENDER` | `""` | (passado via `--parameter-overrides`) | Email remetente verificado no SES |
+| `SES_RECIPIENTS` | `""` | (passado via `--parameter-overrides`) | Destinatários separados por vírgula |
 | `MAX_WORKERS` | `5` | `5` | Ignorado no fetcher (mantido para API) |
 | `LOG_LEVEL` | `INFO` | `INFO` | Log level do logger |
 
@@ -340,6 +368,7 @@ Toda configuração é lida em `src/utils/config.py:load_config()` a partir de v
 - `S3CrudPolicy` sobre `BriefingsBucket` (put/get/delete/list)
 - `DynamoDBCrudPolicy` sobre `HistoryTable` (put/get/query/scan/update/delete)
 - Statement custom: `bedrock:InvokeModel` e `bedrock:Converse` em `Resource: "*"` (Bedrock não aceita ARN específico para foundation models)
+- Statement custom: `ses:SendEmail` e `ses:SendRawEmail` em `Resource: "*"` (poderia restringir ao ARN da identidade verificada, mas o sender vem de Parameter — trade-off pra não precisar sincronizar policy com config em cada mudança)
 - AWSLambdaBasicExecutionRole (implícito, para CloudWatch Logs)
 
 **ApiFunction** recebe (read-only por design):
@@ -466,6 +495,7 @@ Estimativa de ordem de grandeza para o volume atual (~70 tickers, 1 run/dia úti
 | S3 requests | ~50 PUT/mês, GETs baixos | ~$0 |
 | DynamoDB | ~22 PUT/mês, on-demand | ~$0 |
 | API Gateway HTTP | tráfego baixo | ~$0 |
+| SES | ~22 emails/mês (sandbox ilimitado até 200/dia) | ~$0 |
 | CloudWatch Logs | ~200MB/mês | ~$0.10 |
 | ECR | 2 imagens ~500MB cada | $0.10 |
 | **Total** | | **~$0.50-1.00/mês** |

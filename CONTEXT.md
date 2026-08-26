@@ -35,12 +35,13 @@ Todos criados via stack CloudFormation **alphagen-daily** (SAM):
 
 | Recurso | Nome | Função |
 |---|---|---|
-| Lambda (Container Image) | `alphagen-daily-screener-dev` | Pipeline principal (fetch → screen → analyze → persist) |
+| Lambda (Container Image) | `alphagen-daily-screener-dev` | Pipeline principal (fetch → screen → analyze → persist → notify) |
 | Lambda (Container Image) | `alphagen-daily-api-dev` | Endpoints HTTP `/today` e `/history/{date}` |
 | S3 Bucket | `alphagen-daily-briefings-${AWS::AccountId}-dev` | Armazena JSON dos briefings (`briefings/YYYY/MM/DD.json` e `latest.json`) |
 | DynamoDB Table | `alphagen-daily-history-dev` | Metadados de execução, TTL 90 dias |
 | EventBridge Scheduler | `alphagen-daily-ScreenerFunctionDaily-*` | Cron `0 12 ? * MON-FRI *` (12:00 UTC dias úteis) |
 | API Gateway HTTP | `HttpApi` | Endpoints públicos, stage `$default` |
+| Amazon SES | identidade verificada em `us-east-1` | Envia briefing diário como email HTML |
 | ECR Repositories | 2 (screener + api) | Imagens Docker do Lambda |
 
 O nome do bucket resolve em deploy time via CloudFormation intrinsic `${AWS::AccountId}`, então cada conta AWS gera um nome único e o template funciona para qualquer conta sem edição.
@@ -95,9 +96,10 @@ black, ruff, mypy
 4. **Amazon DynamoDB** (histórico com TTL)
 5. **Amazon EventBridge Scheduler** (cron)
 6. **Amazon API Gateway HTTP** (endpoints públicos)
-7. **AWS Systems Manager** (via env vars)
-8. **Amazon CloudWatch Logs** (observabilidade)
-9. **Amazon ECR** (registro de imagens Docker)
+7. **Amazon SES** (envio do briefing diário por email)
+8. **AWS Systems Manager** (via env vars)
+9. **Amazon CloudWatch Logs** (observabilidade)
+10. **Amazon ECR** (registro de imagens Docker)
 
 ---
 
@@ -112,6 +114,8 @@ flowchart TD
     Analyze[analyzer.py<br/>Bedrock Nova Lite Converse API] --> Persist
     Persist[storage.py] --> S3[(S3<br/>briefings/YYYY/MM/DD.json<br/>+ latest.json)]
     Persist --> DDB[(DynamoDB<br/>metadata + TTL 90d)]
+    Persist --> Notify[notifier.py<br/>SES SendEmail HTML+text]
+    Notify --> Inbox[Email<br/>destinatário verificado]
 
     Client[Cliente HTTP] --> ApiGW[API Gateway HTTP]
     ApiGW --> Api[Lambda api<br/>Container Image, 512MB]
@@ -158,6 +162,7 @@ alphagen-daily/
 │   ├── screener.py          # CANSLIM filter logic
 │   ├── analyzer.py          # Bedrock Nova Lite invocation
 │   ├── storage.py           # S3 + DynamoDB writes
+│   ├── notifier.py          # SES email delivery (HTML + text)
 │   ├── models/
 │   │   ├── ticker.py        # dataclass Ticker
 │   │   └── screening_result.py  # dataclass ScreeningResult + DailyBriefing
@@ -219,6 +224,10 @@ Todos os logs saem em formato JSON via `src/utils/logger.py`. CloudWatch Logs In
 ### 6.7 Universo curado manualmente
 
 `src/universe/ai_tickers.py` tem ~70 tickers organizados em 13 verticais (hyperscalers, semiconductors, cloud data, enterprise AI, cybersecurity, EDA, quantum, etc.). Não é lista automatizada. Adição de tickers requer edição manual do arquivo + redeploy.
+
+### 6.8 Email diário via SES com fallback silencioso
+
+O notifier (`src/notifier.py`) é o último passo do pipeline, envolvido em try/except próprio no handler para que uma falha de SES nunca derrube o run — o briefing já está no S3/DDB quando o notify roda, o email é enriquecimento. Renderiza HTML rich (com inline styles, obrigatório para clientes de email) e plain text de fallback, enviados juntos no mesmo payload SES via `multipart/alternative`. Configuração via três Parameters do SAM template (`SesSender`, `SesRecipients`, `NotifyEnabled`), com kill switch explícito por `NOTIFY_ENABLED=false` para desligar sem precisar remover config.
 
 ---
 
@@ -287,10 +296,16 @@ Do diretório `infrastructure/`:
 
 ```bash
 sam build --use-container
-sam deploy
+sam deploy --parameter-overrides SesSender=SEU_EMAIL SesRecipients=DEST1,DEST2 NotifyEnabled=true
 ```
 
 Rebuild só quando código Python muda. Se só mudou env var no `template.yaml`, `sam deploy` já resolve.
+
+Se quiser fixar os overrides do SES no `samconfig.toml`, adicionar em `[default.deploy.parameters]`:
+```toml
+parameter_overrides = "SesSender=\"...\" SesRecipients=\"...\" NotifyEnabled=\"true\""
+```
+Assim `sam deploy` sozinho já herda os valores.
 
 ### Invocação manual do screener
 

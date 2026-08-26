@@ -60,7 +60,7 @@ for r in data["results"]:
 
 Aqui o dado vai atrás de você em vez de você ir atrás do dado. Todas as opções são orquestráveis dentro do próprio Lambda existente (basta adicionar mais um passo no fim do pipeline).
 
-### 2.1 E-mail diário via Amazon SES
+### 2.1 E-mail diário via Amazon SES ✅ CONCLUÍDO
 
 | Atributo | Valor |
 |---|---|
@@ -69,7 +69,9 @@ Aqui o dado vai atrás de você em vez de você ir atrás do dado. Todas as opç
 | Custo | Grátis até 62 mil e-mails/mês (Free Tier) |
 | Para quem | Você e amigos investidores. Formato "newsletter matinal pessoal" |
 
-Adiciona no `handler.py` uma chamada final que renderiza um HTML com os tickers do dia e envia para sua caixa. Domínio pode ser Gmail mesmo (só precisa verificar remetente).
+**Status:** implementado em `src/notifier.py`, wired no `handler.py` como step 6 do pipeline. HTML rich + plain text fallback, envio via Amazon SES. Config via env vars `NOTIFY_ENABLED`, `SES_SENDER`, `SES_RECIPIENTS`.
+
+Gotcha encontrado: domínios como yahoo.com, gmail.com e outros grandes publicam DMARC estrito (`p=reject`) que bloqueia envio via SES sem verificação de domínio. Solução usada: sender em domínio com DMARC permissivo (`p=quarantine`). Solução robusta futura: registrar domínio próprio e configurar DKIM.
 
 ### 2.2 Telegram bot
 
@@ -443,7 +445,7 @@ Considerando perfil de transição de carreira, portfolio building e aprendizado
 
 ### Fase 1 — Próximas 2 semanas (5-10 h)
 
-- [ ] Adicionar **e-mail diário via SES** ao pipeline (baixa complexidade, útil de imediato)
+- [x] Adicionar **e-mail diário via SES** ao pipeline (baixa complexidade, útil de imediato)
 - [ ] Criar **Streamlit app** consumindo o endpoint (portfolio visual pronto)
 - [ ] Adicionar **RSI + MACD** ao ticker (enriquece com indicadores clássicos)
 
