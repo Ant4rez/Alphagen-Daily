@@ -2,7 +2,8 @@
 Handler — Lambda entry point for the AlphaGen Daily screener.
 
 Triggered daily by EventBridge Scheduler. Runs the full pipeline:
-fetch universe -> screen -> analyze via Bedrock -> persist to S3 + DynamoDB.
+fetch universe -> screen -> analyze via Bedrock -> persist to S3 + DynamoDB
+-> notify via SES email.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from typing import Any
 from src.analyzer import analyze_batch
 from src.fetcher import fetch_universe
 from src.models.screening_result import DailyBriefing
+from src.notifier import send_briefing_email
 from src.screener import apply_canslim
 from src.storage import persist
 from src.universe.ai_tickers import AI_UNIVERSE
@@ -43,6 +45,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "min_eps_yoy": config.min_eps_growth_yoy,
             "max_price": config.max_price,
             "require_sma_uptrend": config.require_sma_uptrend,
+            "notify_enabled": config.notify_enabled,
         },
     )
 
@@ -64,6 +67,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
         # 5) Persist to S3 + DynamoDB
         persist(briefing, config)
+
+        # 6) Notify via SES (best-effort; failure must not break the pipeline)
+        try:
+            send_briefing_email(briefing, config)
+        except Exception as notify_exc:
+            logger.error(
+                "email notification failed but pipeline succeeded",
+                extra={"error": str(notify_exc), "error_type": type(notify_exc).__name__},
+            )
 
         logger.info(
             "AlphaGen Daily run complete",

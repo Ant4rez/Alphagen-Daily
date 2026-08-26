@@ -17,6 +17,19 @@ Parameters:
     Type: String
     Default: cron(0 12 ? * MON-FRI *)
     Description: EventBridge cron for the screener (UTC). Default 12:00 UTC weekdays = 09:00 BRT.
+  SesSender:
+    Type: String
+    Default: ""
+    Description: Verified SES sender email address (leave empty to disable email)
+  SesRecipients:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of verified recipient email addresses
+  NotifyEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Master switch for email notifications
 
 Globals:
   Function:
@@ -33,6 +46,9 @@ Globals:
         MIN_EPS_GROWTH_QOQ: "10"
         MIN_EPS_GROWTH_YOY: "15"
         MAX_WORKERS: "5"
+        NOTIFY_ENABLED: !Ref NotifyEnabled
+        SES_SENDER: !Ref SesSender
+        SES_RECIPIENTS: !Ref SesRecipients
 
 Resources:
 
@@ -86,6 +102,11 @@ Resources:
               Action:
                 - bedrock:InvokeModel
                 - bedrock:Converse
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
               Resource: "*"
       Events:
         Daily:

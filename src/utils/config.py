@@ -29,9 +29,21 @@ class Config:
     max_price: float                # e.g. 50.0
     require_sma_uptrend: bool       # SMA20 > SMA50 > SMA200
 
+    # Notifications (SES)
+    notify_enabled: bool
+    ses_sender: str
+    ses_recipients: list[str]
+
     # Runtime
     max_workers: int                # parallel yfinance downloads
     log_level: str
+
+
+def _parse_recipients(raw: str) -> list[str]:
+    """Comma-separated recipients env var -> list of stripped, non-empty emails."""
+    if not raw:
+        return []
+    return [addr.strip() for addr in raw.split(",") if addr.strip()]
 
 
 def load_config() -> Config:
@@ -52,6 +64,10 @@ def load_config() -> Config:
         min_eps_growth_yoy=float(os.environ.get("MIN_EPS_GROWTH_YOY", "25.0")),
         max_price=float(os.environ.get("MAX_PRICE", "50.0")),
         require_sma_uptrend=os.environ.get("REQUIRE_SMA_UPTREND", "true").lower() == "true",
+
+        notify_enabled=os.environ.get("NOTIFY_ENABLED", "false").lower() == "true",
+        ses_sender=os.environ.get("SES_SENDER", ""),
+        ses_recipients=_parse_recipients(os.environ.get("SES_RECIPIENTS", "")),
 
         max_workers=int(os.environ.get("MAX_WORKERS", "5")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
