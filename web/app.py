@@ -441,8 +441,31 @@ def render_parameters_panel() -> None:
         )
 
 
-def render_sidebar(latest_briefing: dict[str, Any] | None) -> tuple[str | None, list[str], str]:
-    """Sidebar with date selector and filters."""
+MCAP_CATEGORIES = [
+    "Small cap (<$2B)",
+    "Mid cap ($2B-$10B)",
+    "Large cap (>$10B)",
+    "Desconhecido",
+]
+
+
+def _mcap_category(mcap: float | None) -> str:
+    """Classify a market cap value into one of the standard categories."""
+    if mcap is None:
+        return "Desconhecido"
+    if mcap < 2e9:
+        return "Small cap (<$2B)"
+    if mcap < 10e9:
+        return "Mid cap ($2B-$10B)"
+    return "Large cap (>$10B)"
+
+
+def render_sidebar(latest_briefing: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Sidebar with date selector and filters.
+
+    Returns a dict with all filter selections applied downstream.
+    """
     st.sidebar.header("📆 Data")
     mode = st.sidebar.radio(
         "Qual briefing?",
@@ -458,11 +481,67 @@ def render_sidebar(latest_briefing: dict[str, Any] | None) -> tuple[str | None, 
     st.sidebar.divider()
     st.sidebar.header("🔎 Filtros")
 
-    if latest_briefing and latest_briefing.get("results"):
-        sectors = sorted({r["ticker"]["sector"] or "Sem setor" for r in latest_briefing["results"]})
+    results = latest_briefing.get("results", []) if latest_briefing else []
+
+    # Setores
+    if results:
+        sectors = sorted({r["ticker"]["sector"] or "Sem setor" for r in results})
         selected_sectors = st.sidebar.multiselect("Setores", sectors, default=sectors)
     else:
         selected_sectors = []
+
+    # Market cap category
+    if results:
+        present_categories = sorted({
+            _mcap_category(r["ticker"].get("market_cap")) for r in results
+        }, key=lambda c: MCAP_CATEGORIES.index(c) if c in MCAP_CATEGORIES else 99)
+        selected_mcap = st.sidebar.multiselect(
+            "Market cap",
+            present_categories,
+            default=present_categories,
+        )
+    else:
+        selected_mcap = list(MCAP_CATEGORIES)
+
+    # Price range
+    if results:
+        prices = [r["ticker"]["current_price"] for r in results]
+        min_p, max_p = min(prices), max(prices)
+        if max_p > min_p:
+            price_range = st.sidebar.slider(
+                "Faixa de preço (USD)",
+                min_value=float(min_p),
+                max_value=float(max_p),
+                value=(float(min_p), float(max_p)),
+                step=1.0,
+                format="$%.0f",
+            )
+        else:
+            st.sidebar.caption(f"Todos os aprovados custam ${min_p:.2f}")
+            price_range = (float(min_p), float(max_p))
+    else:
+        price_range = (0.0, 10_000.0)
+
+    # EPS Y/Y minimum
+    if results:
+        eps_values = [r["ticker"].get("eps_growth_yoy") or 0 for r in results]
+        min_eps, max_eps = min(eps_values), max(eps_values)
+        if max_eps > min_eps:
+            min_eps_filter = st.sidebar.slider(
+                "EPS Y/Y mínimo (%)",
+                min_value=float(min_eps),
+                max_value=float(max_eps),
+                value=float(min_eps),
+                step=1.0,
+                format="%.0f%%",
+            )
+        else:
+            min_eps_filter = float(min_eps)
+    else:
+        min_eps_filter = 0.0
+
+    st.sidebar.divider()
+    st.sidebar.header("↕️ Ordenação")
 
     selected_sort = st.sidebar.selectbox(
         "Ordenar por",
@@ -473,6 +552,7 @@ def render_sidebar(latest_briefing: dict[str, Any] | None) -> tuple[str | None, 
             "EPS Y/Y (maior primeiro)",
             "EPS Q/Q (maior primeiro)",
         ],
+        label_visibility="collapsed",
     )
 
     st.sidebar.divider()
@@ -482,7 +562,55 @@ def render_sidebar(latest_briefing: dict[str, Any] | None) -> tuple[str | None, 
         f"[API]({API_BASE}/today)"
     )
 
-    return selected_date_str, selected_sectors, selected_sort
+    return {
+        "date": selected_date_str,
+        "sectors": selected_sectors,
+        "mcap_categories": selected_mcap,
+        "price_range": price_range,
+        "min_eps_yoy": min_eps_filter,
+        "sort_by": selected_sort,
+    }
+
+
+def apply_filters(
+    results: list[dict[str, Any]],
+    filters: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Apply all filters and sort. Returns the filtered+sorted list."""
+    out = []
+    min_p, max_p = filters["price_range"]
+
+    for r in results:
+        t = r["ticker"]
+
+        sector = t["sector"] or "Sem setor"
+        if sector not in filters["sectors"]:
+            continue
+
+        if _mcap_category(t.get("market_cap")) not in filters["mcap_categories"]:
+            continue
+
+        price = t["current_price"]
+        if not (min_p <= price <= max_p):
+            continue
+
+        eps_yoy = t.get("eps_growth_yoy") or 0
+        if eps_yoy < filters["min_eps_yoy"]:
+            continue
+
+        out.append(r)
+
+    return sort_results(out, filters["sort_by"])
+
+
+def _fmt_market_cap(value: float | None) -> str:
+    if not value:
+        return "N/A"
+    if value >= 1e12:
+        return f"${value / 1e12:.2f}T"
+    if value >= 1e9:
+        return f"${value / 1e9:.2f}B"
+    return f"${value / 1e6:.0f}M"
 
 
 def sort_results(results: list[dict[str, Any]], sort_by: str) -> list[dict[str, Any]]:
@@ -495,16 +623,6 @@ def sort_results(results: list[dict[str, Any]], sort_by: str) -> list[dict[str, 
         "EPS Q/Q (maior primeiro)": lambda r: -(r["ticker"].get("eps_growth_qoq") or 0),
     }
     return sorted(results, key=key_map[sort_by])
-
-
-def _fmt_market_cap(value: float | None) -> str:
-    if not value:
-        return "N/A"
-    if value >= 1e12:
-        return f"${value / 1e12:.2f}T"
-    if value >= 1e9:
-        return f"${value / 1e9:.2f}B"
-    return f"${value / 1e6:.0f}M"
 
 
 def render_ticker_card(result: dict[str, Any]) -> None:
@@ -576,20 +694,23 @@ def main() -> None:
     with st.spinner("Carregando briefing..."):
         preliminary = fetch_briefing(target_date=None)
 
-    selected_date, selected_sectors, selected_sort = render_sidebar(preliminary)
+    filters = render_sidebar(preliminary)
 
-    briefing = preliminary if selected_date is None else fetch_briefing(selected_date)
+    briefing = preliminary if filters["date"] is None else fetch_briefing(filters["date"])
 
     if briefing is None:
         st.error(
-            f"Nenhum briefing encontrado{' para ' + selected_date if selected_date else ''}. "
+            f"Nenhum briefing encontrado{' para ' + filters['date'] if filters['date'] else ''}. "
             "O screener roda em dias úteis às 09:00 BRT — pode ser cedo demais hoje, "
             "ou a data escolhida está fora do histórico."
         )
         return
 
-    # Ticker tape at the very top
-    render_ticker_tape(briefing.get("results", []))
+    all_results = briefing.get("results", [])
+    filtered = apply_filters(all_results, filters)
+
+    # Ticker tape reflects the current filter (feels more responsive)
+    render_ticker_tape(filtered if filtered else all_results)
 
     render_header(briefing)
     st.divider()
@@ -597,20 +718,11 @@ def main() -> None:
     render_parameters_panel()
     st.divider()
 
-    # Filter and sort results
-    all_results = briefing.get("results", [])
-    if selected_sectors:
-        filtered = [
-            r for r in all_results
-            if (r["ticker"]["sector"] or "Sem setor") in selected_sectors
-        ]
-    else:
-        filtered = all_results
-
-    filtered = sort_results(filtered, selected_sort)
-
     if not filtered:
-        st.info("Nenhum ticker corresponde aos filtros selecionados.")
+        st.warning(
+            "Nenhum ticker corresponde aos filtros selecionados. "
+            "Relaxe algum filtro no painel lateral para ver resultados."
+        )
         return
 
     st.subheader(
