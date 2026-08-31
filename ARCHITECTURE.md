@@ -70,7 +70,13 @@ flowchart LR
         API[Lambda: api<br/>Container Image, 512MB, 30s]
     end
 
+    subgraph Frontend["Camada visual (fora da AWS)"]
+        WEB[Streamlit Dashboard<br/>web/app.py<br/>hospedado no Streamlit Cloud]
+    end
+
     Client[Cliente HTTP] --> APIG
+    WEB --> APIG
+    WEB -.yfinance.-> YF
     APIG --> API
     API --> S3
 
@@ -211,6 +217,44 @@ Corpos de erro são objetos `{"error": "..."}` compactos.
 
 ---
 
+## 4.5 Streamlit dashboard (consumer)
+
+Aplicação frontend desacoplada do backend, single-file (`web/app.py`), hospedada no Streamlit Community Cloud em `https://alphagen-daily.streamlit.app`. Consome apenas a API pública (`/today` e `/history/{date}`) — não fala com S3, DynamoDB, Lambda ou qualquer serviço AWS diretamente. Isso torna o app portátil: qualquer pessoa pode fazer fork e apontar pra outra API sem tocar em código AWS.
+
+### Componentes da UI
+
+- Header + subtítulo com data do briefing
+- Row de KPIs (universo, aprovados, data)
+- Painel de parâmetros CANSLIM expansível com os thresholds em produção
+- Sidebar com filtros: data (padrão hoje, com `date_input` para histórico), multiselect de setores, ordenação
+- Grid de cards por ticker aprovado (métricas + tese + risco chave)
+- Por card: expander "Ver preço e médias móveis" que renderiza chart Plotly de OHLC + SMA20/50/200 dos últimos ~180 dias
+
+### Fluxo de dados
+
+- Ao abrir, chama `GET /today` (cache TTL 5min)
+- Ao trocar data no sidebar, chama `GET /history/{YYYY-MM-DD}` (mesma cache function chaveada por argumento)
+- Ao expandir chart de um ticker, chama `yfinance.download(symbol)` (cache TTL 1h) e calcula SMAs no pandas
+- Filtros e ordenação são client-side sobre o JSON já recebido
+
+### Caching
+
+`@st.cache_data` decora as duas funções de fetch. Streamlit chaveia por argumentos, então `fetch_briefing()` e `fetch_briefing("2026-08-30")` são entries separadas. TTL diferenciado: briefing 5min (muda 1x/dia mas UX espera atualização se você fica com a aba aberta), price history 1h (dado varia pouco na escala de 180 dias).
+
+### Deploy
+
+Streamlit Cloud lê o repo GitHub. Configuração: `Repository=Ant4rez/Alphagen-Daily`, `Branch=main`, `Main file path=web/app.py`. `web/requirements.txt` isolado (não usa o `requirements.txt` do backend). Cada push na `main` que toque em `web/` dispara redeploy automático em ~2min.
+
+Limitações do Cloud gratuito: 1GB RAM (mais que suficiente), app entra em sleep após ~10min sem tráfego (primeira request depois demora ~30s pra acordar).
+
+### Trade-offs
+
+- **Constante `DEPLOYED_THRESHOLDS`** no topo de `app.py` duplica os valores do `template.yaml`. Fonte única exigiria endpoint `/config`. Aceitável hoje, TODO explícito.
+- **Chart via yfinance client-side** adiciona latência (~2-3s por ticker expandido), mas evita mudança de contrato na API. Alternativa futura: `GET /history/{symbol}` na API expondo OHLC.
+- **Deploy fora da AWS** significa nada de VPC, nada de IAM. Streamlit Cloud é internet aberto, mas como só lê endpoint público sem segredos, é seguro.
+
+---
+
 ## 5. Módulos e responsabilidades
 
 Cada módulo tem uma única responsabilidade e um contrato claro de entrada/saída.
@@ -229,6 +273,7 @@ Cada módulo tem uma única responsabilidade e um contrato claro de entrada/saí
 | `universe/ai_tickers.py` | Universo curado por vertical + função de filtro | (só stdlib) |
 | `utils/config.py` | Carregar env vars em `Config` imutável | (só stdlib) |
 | `utils/logger.py` | Logger JSON estruturado | (só stdlib) |
+| `web/app.py` | Dashboard Streamlit consumindo a API pública | streamlit, requests, pandas, plotly, yfinance |
 
 Regra arquitetural: nenhum módulo lê `os.environ` diretamente, apenas via `utils.config.load_config()`. Nenhum módulo instancia `logging.getLogger(...)` diretamente, apenas via `utils.logger.get_logger(__name__)`.
 
@@ -498,6 +543,7 @@ Estimativa de ordem de grandeza para o volume atual (~70 tickers, 1 run/dia úti
 | SES | ~22 emails/mês (sandbox ilimitado até 200/dia) | ~$0 |
 | CloudWatch Logs | ~200MB/mês | ~$0.10 |
 | ECR | 2 imagens ~500MB cada | $0.10 |
+| Streamlit Cloud | 1GB RAM, sleep após inatividade | ~$0 (gratuito) |
 | **Total** | | **~$0.50-1.00/mês** |
 
 Em free tier ou com créditos, o custo real hoje é praticamente zero. Os maiores drivers de aumento futuro serão: (1) aumentar frequência de execução, (2) crescer o universo, (3) aumentar `bedrock_max_tokens`, (4) tráfego da API se virar produto público.

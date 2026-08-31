@@ -42,14 +42,16 @@ Todos criados via stack CloudFormation **alphagen-daily** (SAM):
 | EventBridge Scheduler | `alphagen-daily-ScreenerFunctionDaily-*` | Cron `0 12 ? * MON-FRI *` (12:00 UTC dias úteis) |
 | API Gateway HTTP | `HttpApi` | Endpoints públicos, stage `$default` |
 | Amazon SES | identidade verificada em `us-east-1` | Envia briefing diário como email HTML |
+| Streamlit Cloud | `https://alphagen-daily.streamlit.app` | Dashboard público consumindo a API pública |
 | ECR Repositories | 2 (screener + api) | Imagens Docker do Lambda |
 
 O nome do bucket resolve em deploy time via CloudFormation intrinsic `${AWS::AccountId}`, então cada conta AWS gera um nome único e o template funciona para qualquer conta sem edição.
 
 ### Endpoints públicos
 
-- **Latest briefing:** `https://r0kn41v28a.execute-api.us-east-1.amazonaws.com/today`
-- **Histórico por data:** `https://r0kn41v28a.execute-api.us-east-1.amazonaws.com/history/{YYYY-MM-DD}`
+- **Latest briefing (API):** `https://r0kn41v28a.execute-api.us-east-1.amazonaws.com/today`
+- **Histórico por data (API):** `https://r0kn41v28a.execute-api.us-east-1.amazonaws.com/history/{YYYY-MM-DD}`
+- **Dashboard visual (Streamlit):** `https://alphagen-daily.streamlit.app`
 
 ### Repositório
 
@@ -101,6 +103,10 @@ black, ruff, mypy
 9. **Amazon CloudWatch Logs** (observabilidade)
 10. **Amazon ECR** (registro de imagens Docker)
 
+Frontend (fora da AWS):
+
+11. **Streamlit Community Cloud** (hospedagem gratuita do dashboard `web/app.py`, redeploy automático a cada push na main)
+
 ---
 
 ## 4. Arquitetura em fluxo
@@ -118,8 +124,11 @@ flowchart TD
     Notify --> Inbox[Email<br/>destinatário verificado]
 
     Client[Cliente HTTP] --> ApiGW[API Gateway HTTP]
+    Dashboard[Streamlit Dashboard<br/>alphagen-daily.streamlit.app] --> ApiGW
     ApiGW --> Api[Lambda api<br/>Container Image, 512MB]
     Api --> S3
+
+    Dashboard -.yfinance.-> YFin[Yahoo Finance<br/>histórico p/ SMA chart]
 
     Screener -.logs.-> CW[CloudWatch Logs]
     Api -.logs.-> CW
@@ -174,6 +183,13 @@ alphagen-daily/
 │
 ├── tests/                   # (esqueletos, ainda vazios)
 │
+├── web/                     # Frontend Streamlit (deploy separado no Streamlit Cloud)
+│   ├── app.py               # Dashboard completo em arquivo único
+│   ├── requirements.txt     # streamlit, requests, pandas, plotly, yfinance
+│   ├── .streamlit/
+│   │   └── config.toml      # Tema light
+│   └── README.md
+│
 ├── infrastructure/
 │   ├── template.yaml        # SAM template (todos os recursos AWS)
 │   ├── samconfig.toml       # SAM CLI config
@@ -225,7 +241,13 @@ Todos os logs saem em formato JSON via `src/utils/logger.py`. CloudWatch Logs In
 
 `src/universe/ai_tickers.py` tem ~70 tickers organizados em 13 verticais (hyperscalers, semiconductors, cloud data, enterprise AI, cybersecurity, EDA, quantum, etc.). Não é lista automatizada. Adição de tickers requer edição manual do arquivo + redeploy.
 
-### 6.8 Email diário via SES com fallback silencioso
+### 6.8 Dashboard Streamlit desacoplado do backend
+
+`web/app.py` é uma aplicação Streamlit single-file que consome a API pública (`/today` e `/history/{date}`) e renderiza cards por ticker aprovado com painel de parâmetros CANSLIM colapsável, filtros (data, setor, ordenação) no sidebar e chart Plotly de preço + SMA20/50/200 por ticker (dados buscados on-demand via yfinance, cacheados 1h). Deploy no Streamlit Cloud com redeploy automático a cada push na `main`. Zero código backend novo — puro consumidor da API que já existia.
+
+Trade-off: constante `DEPLOYED_THRESHOLDS` no topo de `app.py` duplica os valores que estão no `template.yaml`. Se mudar threshold no backend, atualizar aqui também. Solução futura: expor `GET /config` no `api_handler.py` para fonte única.
+
+### 6.9 Email diário via SES com fallback silencioso
 
 O notifier (`src/notifier.py`) é o último passo do pipeline, envolvido em try/except próprio no handler para que uma falha de SES nunca derrube o run — o briefing já está no S3/DDB quando o notify roda, o email é enriquecimento. Renderiza HTML rich (com inline styles, obrigatório para clientes de email) e plain text de fallback, enviados juntos no mesmo payload SES via `multipart/alternative`. Configuração via três Parameters do SAM template (`SesSender`, `SesRecipients`, `NotifyEnabled`), com kill switch explícito por `NOTIFY_ENABLED=false` para desligar sem precisar remover config.
 

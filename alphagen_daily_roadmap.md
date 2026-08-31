@@ -123,16 +123,18 @@ App mobile registra device token no seu backend. Lambda dispara para Firebase Cl
 
 Transforma o JSON cru em interface bonita, navegável, compartilhável.
 
-### 3.1 Streamlit — MVP visual em 1 dia
+### 3.1 Streamlit — MVP visual em 1 dia ✅ CONCLUÍDO
 
 | Atributo | Valor |
 |---|---|
 | Complexidade | Baixa |
 | Tempo | 4-8 h |
-| Custo | Zero (Streamlit Cloud) ou baixo (EC2 t3.micro) |
+| Custo | Zero (Streamlit Cloud) |
 | Para quem | Primeira interface visual. Perfeito para portfólio |
 
-Script Python de ~200 linhas que faz fetch do endpoint e renderiza tabela + gráficos com Plotly. Deploy num clique no Streamlit Cloud.
+**Status:** implementado em `web/app.py` (~350 linhas single-file), deployado em `https://alphagen-daily.streamlit.app`. Consome os endpoints `/today` e `/history/{date}` da API pública. Features: KPIs, painel colapsável de parâmetros CANSLIM, sidebar com filtros (data/setor/ordenação), cards por ticker aprovado, chart Plotly de preço + SMA20/50/200 (dados yfinance on-demand, cacheados 1h).
+
+Redeploy automático a cada push na `main` que toque em `web/`. Documentado em `web/README.md` e detalhado em `ARCHITECTURE.md` seção 4.5.
 
 Exemplo esquelético:
 
@@ -446,7 +448,7 @@ Considerando perfil de transição de carreira, portfolio building e aprendizado
 ### Fase 1 — Próximas 2 semanas (5-10 h)
 
 - [x] Adicionar **e-mail diário via SES** ao pipeline (baixa complexidade, útil de imediato)
-- [ ] Criar **Streamlit app** consumindo o endpoint (portfolio visual pronto)
+- [x] Criar **Streamlit app** consumindo o endpoint (portfolio visual pronto)
 - [ ] Adicionar **RSI + MACD** ao ticker (enriquece com indicadores clássicos)
 
 ### Fase 2 — Próximo mês (20-30 h)
