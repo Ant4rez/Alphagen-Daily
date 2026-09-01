@@ -129,6 +129,49 @@ AI_ADJACENT = [
     "NFLX",   # Netflix — recommendation AI
 ]
 
+# International AI plays via ADRs (Europe / Asia listed in US)
+INTERNATIONAL_ADR = [
+    "BABA",   # Alibaba — China e-commerce + Alicloud + AI
+    "BIDU",   # Baidu — China AI search + autonomous driving (Apollo)
+    "JD",     # JD.com — China e-commerce + AI logistics
+    "PDD",    # Pinduoduo/Temu — China AI-powered e-commerce
+    "NTES",   # NetEase — China gaming + AI research
+    "SE",     # Sea Ltd — Southeast Asia super-app (Shopee/Garena)
+    "GRAB",   # Grab — Southeast Asia ride/delivery + AI
+    "SONY",   # Sony — Japan semiconductors + robotics + entertainment
+    "SAP",    # SAP — Germany enterprise software + AI (Joule)
+    "SPOT",   # Spotify — Sweden recommendation AI
+    "STLA",   # Stellantis — European auto tech + software
+]
+
+# Fintech using AI (payments, lending, banking)
+FINTECH_AI = [
+    "SOFI",   # SoFi — AI-driven consumer banking
+    "AFRM",   # Affirm — AI credit / BNPL
+    "HOOD",   # Robinhood — trading + AI research
+    "UPST",   # Upstart — AI lending platform
+    "COIN",   # Coinbase — crypto exchange
+    "XYZ",    # Block (formerly Square) — AI merchant + Cash App
+    "NU",     # Nubank — LatAm AI-first neobank
+    "STNE",   # StoneCo — Brazil fintech
+    "PAGS",   # PagSeguro — Brazil fintech
+    "MELI",   # MercadoLibre — LatAm e-commerce + fintech + AI
+]
+
+# Robotics & industrial automation
+ROBOTICS = [
+    "ISRG",   # Intuitive Surgical — surgical robotics
+    "TER",    # Teradyne — industrial robotics + semi test
+    "IRBT",   # iRobot — consumer robotics
+    "ROK",    # Rockwell Automation — industrial automation
+    "EMR",    # Emerson Electric — automation + AI
+    "SYM",    # Symbotic — warehouse automation
+    "HON",    # Honeywell — industrial + robotics + AI
+    "ABBNY",  # ABB — Swiss industrial automation (OTC ADR)
+    "FANUY",  # Fanuc — Japan industrial robots (OTC ADR)
+    "CGNX",   # Cognex — machine vision
+]
+
 
 # Full universe used by the screener (dedup applied)
 AI_UNIVERSE: list[str] = sorted(set(
@@ -145,6 +188,9 @@ AI_UNIVERSE: list[str] = sorted(set(
     + QUANTUM
     + AI_CONSULTING
     + AI_ADJACENT
+    + INTERNATIONAL_ADR
+    + FINTECH_AI
+    + ROBOTICS
 ))
 
 
@@ -176,6 +222,9 @@ def get_universe(verticals: list[str] | None = None) -> list[str]:
         "QUANTUM": QUANTUM,
         "AI_CONSULTING": AI_CONSULTING,
         "AI_ADJACENT": AI_ADJACENT,
+        "INTERNATIONAL_ADR": INTERNATIONAL_ADR,
+        "FINTECH_AI": FINTECH_AI,
+        "ROBOTICS": ROBOTICS,
     }
 
     tickers: list[str] = []
