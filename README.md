@@ -1,78 +1,279 @@
 # AlphaGen Daily
 
-> Always-on AWS agent that screens AI-related US stocks using CANSLIM-inspired criteria and generates daily analytical briefings powered by Amazon Bedrock (Nova Lite).
+**Fully autonomous serverless AI agent on AWS that screens AI-related US stocks every trading day and generates investment briefings powered by Amazon Bedrock.**
 
-Built for the **AWS Weekend Creative Agent Challenge** (August 2026).
+[![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
+[![Amazon Bedrock](https://img.shields.io/badge/Amazon%20Bedrock-Nova%20Lite-FF9900?style=flat&logo=amazon&logoColor=white)](https://aws.amazon.com/bedrock/)
+[![AWS SAM](https://img.shields.io/badge/IaC-AWS%20SAM-FF9900?style=flat&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/serverless/sam/)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Container%20Image-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![AWS Weekend Creative Agent Challenge](https://img.shields.io/badge/AWS-Weekend%20Creative%20Agent%20Challenge-232F3E?style=flat)](https://aws.amazon.com/)
 
-## Overview
+**Live dashboard:** [https://alphagen-daily.streamlit.app](https://alphagen-daily.streamlit.app)
+**Repository:** [https://github.com/Ant4rez/Alphagen-Daily](https://github.com/Ant4rez/Alphagen-Daily)
 
-AlphaGen Daily runs autonomously every trading day. Before US market opens, it:
+</div>
 
-1. Downloads price history and fundamentals for a curated universe of ~70 AI-related tickers (semiconductors, hyperscalers, enterprise AI SaaS, cloud data platforms, AI infrastructure)
-2. Applies CANSLIM-inspired filters (EPS growth Q/Q > 15%, Y/Y > 25%, price momentum via SMA crossovers)
-3. Uses Amazon Bedrock (Nova Lite) to generate a concise analytical narrative for each approved ticker
-4. Persists the daily briefing to S3 and DynamoDB
-5. Exposes results via a public HTTP endpoint
+---
 
-No manual steps. No console. Ready when you return.
+## TL;DR
+
+AlphaGen Daily runs autonomously every US trading day before market open. It fetches price history and fundamentals for a curated universe of **72 AI-related tickers**, applies **CANSLIM-inspired quantitative filters**, and asks **Amazon Bedrock (Nova Lite)** to generate a concise investment thesis and key risk for each approved ticker. The full pipeline runs end-to-end in **~72 seconds** and costs **less than US$ 1 per month**.
+
+Built as a submission to the **AWS Weekend Creative Agent Challenge (August 2026)**.
+
+---
+
+## Screenshots
+
+> Streamlit dashboard consuming the public API — updated every trading day.
+
+_Add screenshots to `docs/screenshots/` and reference them here._
+
+`![Dashboard overview](docs/screenshots/dashboard.png)`
+
+---
 
 ## Architecture
 
-Refer to [ARCHITECTURE.md](ARCHITECTURE.md) for full details.
+```mermaid
+flowchart LR
+    A[EventBridge Scheduler<br/>weekdays, pre-market] --> B[AWS Lambda<br/>Container Image]
+    L[SSM Parameter Store<br/>runtime configuration] --> B
+    B --> C[Universe Fetcher<br/>72 AI tickers]
+    C --> D[CANSLIM Screener<br/>EPS Q/Q, EPS Y/Y, price, SMA]
+    D --> E[Amazon Bedrock<br/>Nova Lite - cross-region]
+    E --> F[Amazon S3<br/>daily briefings + latest.json]
+    E --> G[Amazon DynamoDB<br/>last 60 executions]
+    E --> H[Amazon SES<br/>email notification]
+    F --> I[API Gateway HTTP<br/>/today, /history/&#123;date&#125;]
+    I --> J[Streamlit Dashboard<br/>public consumer]
+    B --> K[Amazon CloudWatch Logs<br/>structured JSON]
+```
 
-### AWS Services Used
+**Ten AWS services integrated as Infrastructure as Code with a single AWS SAM template.**
 
-- **Amazon EventBridge Scheduler** — cron trigger (weekdays, pre-market)
-- **AWS Lambda** — orchestration and processing
-- **Amazon Bedrock (Nova Lite)** — LLM-based analysis
-- **Amazon S3** — daily briefing storage
-- **Amazon DynamoDB** — execution history (last 60 runs)
-- **Amazon API Gateway (HTTP)** — public endpoints (`/today`, `/history/{date}`)
-- **Amazon CloudWatch Logs** — observability
-- **AWS Systems Manager Parameter Store** — configuration
-- **AWS SAM** — infrastructure as code
+For a deeper dive on design decisions, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-## Getting Started
+---
 
-### Prerequisites
+## Features
 
+- **Fully autonomous.** No manual steps. No console. The agent runs itself on a cron schedule.
+- **Curated AI universe.** 72 US tickers across semiconductors, hyperscalers, enterprise AI SaaS, cloud data platforms, and AI infrastructure.
+- **CANSLIM-inspired screening.** Quantitative filters on earnings growth (Q/Q and Y/Y), price ceiling, and moving-average trend.
+- **LLM-generated investment thesis.** Each approved ticker gets a concise thesis and a key risk, generated by Amazon Bedrock Nova Lite using structured prompts.
+- **Output validation.** JSON output from the LLM is validated against a strict schema before persistence.
+- **Graceful failure handling.** Delisted or missing tickers are skipped without breaking the pipeline (verified in production with tickers such as `CFLT`, `JNPR`, `HCP`).
+- **Public HTTP API.** Consumers query `/today` for the latest briefing or `/history/{date}` for a specific day.
+- **Structured observability.** JSON logs in CloudWatch with request IDs, ticker counts, rejection reasons, and per-stage timing.
+- **Least-privilege IAM.** Each function scope has narrow permissions defined in SAM.
+
+---
+
+## Results and metrics
+
+Measured in production (CloudWatch, run of 2026-08-31):
+
+| Metric | Value |
+|---|---|
+| Universe size | 72 tickers |
+| Successfully fetched | 69 tickers |
+| Delisted / skipped | 3 tickers |
+| Approved by CANSLIM screener | 8 tickers |
+| Average approval rate | ~11% |
+| End-to-end Lambda duration | **~72 seconds** |
+| Billed Lambda duration | ~75 seconds |
+| Memory provisioned | 1,536 MB |
+| Peak memory used | 223 MB |
+| Init duration (cold start) | ~2.8 seconds |
+| Bedrock invocation time per ticker | ~1.2 seconds |
+| **Estimated monthly cost** | **< US$ 1** |
+
+Sample approved tickers (2026-08-31): `AMZN`, `ANET`, `AVGO`, `DELL`, `FTNT`, `GOOGL`, `NVDA`, `OKTA`.
+
+Rejection breakdown per screening rule (same run):
+
+| Rule | Rejected |
+|---|---|
+| EPS Q/Q growth | 33 |
+| Simple Moving Average uptrend | 22 |
+| Price ceiling | 5 |
+| EPS Y/Y growth | 1 |
+
+---
+
+## Tech stack
+
+**Cloud and Runtime**
+- AWS Lambda (Docker Container Image, Python 3.11)
+- Amazon EventBridge Scheduler
+- Amazon Bedrock (Nova Lite with cross-region inference profile)
+- Amazon S3, Amazon DynamoDB
+- Amazon API Gateway HTTP
+- Amazon SES
+- Amazon CloudWatch Logs
+- AWS Systems Manager Parameter Store
+- AWS Identity and Access Management (IAM)
+
+**Infrastructure as Code**
+- AWS SAM (single template, ten services)
+- Docker (multi-stage build for Lambda Container Image)
+
+**Application**
 - Python 3.11
-- AWS CLI configured
+- `boto3` for AWS SDK
+- `yfinance` for market data
+- `pandas` for data manipulation
+- Custom prompt engineering utilities
+
+**Frontend consumer**
+- Streamlit dashboard (`web/`), consuming the public API
+
+---
+
+## Repository structure
+
+```
+Alphagen-Daily/
+├── docs/                    Additional documentation and diagrams
+├── infrastructure/          AWS SAM template and deploy scripts
+├── src/                     Lambda source code
+│   ├── handler.py           Entry point
+│   ├── fetcher.py           Universe download and normalization
+│   ├── screener.py          CANSLIM filters
+│   ├── analyzer.py          Bedrock invocation and validation
+│   ├── storage.py           S3 and DynamoDB persistence
+│   └── notifier.py          SES email delivery
+├── tests/                   Unit tests
+├── web/                     Streamlit dashboard
+├── ARCHITECTURE.md          System design deep dive
+├── CONTEXT.md               Product context and goals
+├── CONTRIBUTING.md          Contribution guidelines
+├── Dockerfile               Lambda Container Image build
+├── Makefile                 Deploy and utility targets
+├── requirements.txt         Runtime dependencies
+├── requirements-dev.txt     Development dependencies
+└── README.md                This file
+```
+
+---
+
+## Quickstart
+
+**Prerequisites**
+- AWS account with Amazon Bedrock model access enabled for Nova Lite
+- AWS CLI configured with a profile that has deployment permissions
 - AWS SAM CLI installed
-- Amazon Bedrock model access enabled for Nova Lite
+- Docker installed and running
+- Python 3.11
 
-### Local Setup
+**Clone and set up local environment**
 
-\`\`\`bash
+```bash
+git clone https://github.com/Ant4rez/Alphagen-Daily.git
+cd Alphagen-Daily
+
 python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+source .venv/bin/activate            # Linux / macOS
+# .venv\Scripts\activate              # Windows
+
 pip install -r requirements.txt -r requirements-dev.txt
-\`\`\`
+```
 
-### Run Tests
+**Run tests**
 
-\`\`\`bash
+```bash
 make test
-\`\`\`
+```
 
-### Deploy
+**Deploy to AWS**
 
-\`\`\`bash
+```bash
 make deploy
-\`\`\`
+```
+
+The Makefile wraps `sam build` and `sam deploy` with sensible defaults. See [`infrastructure/`](infrastructure/) for the SAM template and parameter files.
+
+---
+
+## Configuration
+
+Runtime configuration lives in AWS Systems Manager Parameter Store, not in code. This lets you tune the agent without redeploying.
+
+Key parameters:
+
+| Parameter | Purpose |
+|---|---|
+| `min_eps_qoq` | Minimum quarter-over-quarter EPS growth (%) |
+| `min_eps_yoy` | Minimum year-over-year EPS growth (%) |
+| `max_price` | Maximum ticker price (US$) |
+| `require_sma_uptrend` | Enforce short SMA above long SMA |
+| `universe_size` | Number of tickers in the curated universe |
+| `notify_enabled` | Toggle SES email delivery |
+
+Sensitive values (Bedrock region, SES sender) live in SAM parameters and are injected as Lambda environment variables at deploy time.
+
+---
+
+## Public API
+
+Base URL is provisioned by API Gateway at deploy time and returned in the SAM outputs.
+
+- `GET /today` — returns the latest briefing (JSON)
+- `GET /history/{date}` — returns the briefing for a specific date (`YYYY-MM-DD`)
+
+Sample response:
+
+```json
+{
+  "run_date": "2026-08-31",
+  "universe_size": 72,
+  "approved_count": 8,
+  "approved": [
+    {
+      "symbol": "NVDA",
+      "price": 128.45,
+      "thesis": "…",
+      "key_risk": "…"
+    }
+  ]
+}
+```
+
+---
 
 ## Roadmap
 
 - [ ] Add Brazilian market (B3) support with adjusted CANSLIM thresholds
 - [ ] Add sentiment layer from news headlines
-- [ ] Add Slack/email delivery via Amazon SNS
+- [ ] Add Slack delivery via Amazon SNS
 - [ ] Add multi-strategy screening (value, dividend, quality)
 - [ ] Add backtest module for historical validation
+- [ ] Migrate deploy pipeline to GitHub Actions (CI/CD)
+- [ ] Optimize Lambda memory from 1,536 MB to 512 MB (peak usage is 223 MB)
 
-## Author
+---
 
-Thiago Fiel de Oliveira — Data Science student at FIAP, AWS Certified AI Practitioner.
+## Contributing
+
+Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for guidelines. Bugs, suggestions, and pull requests can be opened via the Issues tab.
+
+---
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
+
+---
+
+## Author
+
+**Thiago Fiel de Oliveira**
+Data Science student at FIAP · AWS Certified AI Practitioner
+
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/thiagofieldeoliveira/)
+[![GitHub](https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/Ant4rez)
+
+Built as a submission to the **AWS Weekend Creative Agent Challenge (August 2026)**.
