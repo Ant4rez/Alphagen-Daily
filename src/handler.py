@@ -44,7 +44,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             "min_eps_qoq": config.min_eps_growth_qoq,
             "min_eps_yoy": config.min_eps_growth_yoy,
             "max_price": config.max_price,
-            "require_sma_uptrend": config.require_sma_uptrend,
+            "active_filters": config.active_filters,
             "notify_enabled": config.notify_enabled,
         },
     )

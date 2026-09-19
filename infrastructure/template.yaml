@@ -30,6 +30,13 @@ Parameters:
     Default: "true"
     AllowedValues: ["true", "false"]
     Description: Master switch for email notifications
+  ActiveFilters:
+    Type: String
+    Default: "eps_qoq,eps_yoy,price_cap,sma20_gt_sma50,sma50_gt_sma200"
+    Description: >
+      Comma-separated list of filters to apply in the screener, in order.
+      Available: eps_qoq, eps_yoy, price_cap, sma20_gt_sma50, sma50_gt_sma200,
+      price_above_sma20, price_above_sma200. See src/screener.py FILTERS.
 
 Globals:
   Function:
@@ -46,6 +53,7 @@ Globals:
         MIN_EPS_GROWTH_QOQ: "10"
         MIN_EPS_GROWTH_YOY: "15"
         MAX_WORKERS: "5"
+        ACTIVE_FILTERS: !Ref ActiveFilters
         NOTIFY_ENABLED: !Ref NotifyEnabled
         SES_SENDER: !Ref SesSender
         SES_RECIPIENTS: !Ref SesRecipients

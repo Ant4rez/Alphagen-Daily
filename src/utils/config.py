@@ -27,7 +27,11 @@ class Config:
     min_eps_growth_qoq: float       # e.g. 15.0 = 15%
     min_eps_growth_yoy: float       # e.g. 25.0
     max_price: float                # e.g. 50.0
-    require_sma_uptrend: bool       # SMA20 > SMA50 > SMA200
+
+    # Screener pluggable filters — comma-separated names from the FILTERS
+    # registry in src/screener.py (e.g. "eps_qoq,eps_yoy,price_cap,sma20_gt_sma50").
+    # See screener.DEFAULT_ACTIVE_FILTERS for the fallback if unset.
+    active_filters: list[str]
 
     # Notifications (SES)
     notify_enabled: bool
@@ -39,11 +43,11 @@ class Config:
     log_level: str
 
 
-def _parse_recipients(raw: str) -> list[str]:
-    """Comma-separated recipients env var -> list of stripped, non-empty emails."""
+def _parse_csv(raw: str) -> list[str]:
+    """Comma-separated env var -> list of stripped, non-empty strings."""
     if not raw:
         return []
-    return [addr.strip() for addr in raw.split(",") if addr.strip()]
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def load_config() -> Config:
@@ -63,11 +67,12 @@ def load_config() -> Config:
         min_eps_growth_qoq=float(os.environ.get("MIN_EPS_GROWTH_QOQ", "15.0")),
         min_eps_growth_yoy=float(os.environ.get("MIN_EPS_GROWTH_YOY", "25.0")),
         max_price=float(os.environ.get("MAX_PRICE", "50.0")),
-        require_sma_uptrend=os.environ.get("REQUIRE_SMA_UPTREND", "true").lower() == "true",
+
+        active_filters=_parse_csv(os.environ.get("ACTIVE_FILTERS", "")),
 
         notify_enabled=os.environ.get("NOTIFY_ENABLED", "false").lower() == "true",
         ses_sender=os.environ.get("SES_SENDER", ""),
-        ses_recipients=_parse_recipients(os.environ.get("SES_RECIPIENTS", "")),
+        ses_recipients=_parse_csv(os.environ.get("SES_RECIPIENTS", "")),
 
         max_workers=int(os.environ.get("MAX_WORKERS", "5")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),

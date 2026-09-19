@@ -26,14 +26,30 @@ import yfinance as yf
 
 API_BASE = "https://r0kn41v28a.execute-api.us-east-1.amazonaws.com"
 
-# CANSLIM thresholds actually deployed in the SAM template.
+# CANSLIM thresholds and active filters deployed in the SAM template.
 # If you change these in template.yaml, mirror the change here so the UI
 # panel matches reality until we expose them via a /config endpoint.
 DEPLOYED_THRESHOLDS = {
     "min_eps_qoq": 10.0,
     "min_eps_yoy": 15.0,
     "max_price": 500.0,
-    "require_sma_uptrend": True,
+    "active_filters": [
+        "eps_qoq",
+        "eps_yoy",
+        "price_cap",
+        "sma20_gt_sma50",
+        "sma50_gt_sma200",
+    ],
+}
+
+FILTER_DESCRIPTIONS = {
+    "eps_qoq": "EPS Q/Q >= mínimo (crescimento trimestre a trimestre)",
+    "eps_yoy": "EPS Y/Y >= mínimo (crescimento ano a ano)",
+    "price_cap": "Preço <= teto máximo",
+    "sma20_gt_sma50": "SMA20 > SMA50 (uptrend curto prazo)",
+    "sma50_gt_sma200": "SMA50 > SMA200 (uptrend longo prazo)",
+    "price_above_sma20": "Preço > SMA20 (acima da média curta)",
+    "price_above_sma200": "Preço > SMA200 (acima da média longa)",
 }
 
 st.set_page_config(
@@ -407,37 +423,29 @@ def render_kpis(briefing: dict[str, Any]) -> None:
 
 
 def render_parameters_panel() -> None:
-    """Expandable panel showing the deployed CANSLIM thresholds."""
+    """Expandable panel showing the deployed CANSLIM thresholds and active filters."""
     with st.expander("🔧 Parâmetros do screening CANSLIM-inspired", expanded=False):
         st.markdown(
             "**CANSLIM** é um método de análise de ações criado por William O'Neil "
             "combinando fundamentais (crescimento de EPS) com momento técnico (médias móveis). "
-            "Nossa versão simplificada usa três dessas dimensões:"
+            "Nossa versão simplificada aplica filtros configuráveis via env var "
+            "`ACTIVE_FILTERS` no backend."
         )
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(
-                f"**EPS Growth Q/Q ≥ `{DEPLOYED_THRESHOLDS['min_eps_qoq']}%`**\n\n"
-                f"Crescimento do lucro por ação vs trimestre anterior — captura aceleração recente."
-            )
-            st.markdown(
-                f"**EPS Growth Y/Y ≥ `{DEPLOYED_THRESHOLDS['min_eps_yoy']}%`**\n\n"
-                f"Crescimento anual — filtra empresas com trajetória sustentada, não trimestre isolado."
-            )
+        st.markdown("**Thresholds numéricos ativos:**")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("EPS Q/Q mínimo", f"{DEPLOYED_THRESHOLDS['min_eps_qoq']}%")
+        col2.metric("EPS Y/Y mínimo", f"{DEPLOYED_THRESHOLDS['min_eps_yoy']}%")
+        col3.metric("Preço máximo", f"${DEPLOYED_THRESHOLDS['max_price']:.0f}")
 
-        with col2:
-            st.markdown(
-                f"**Preço ≤ `${DEPLOYED_THRESHOLDS['max_price']:.0f}`**\n\n"
-                f"Teto configurado alto para não excluir large caps (NVDA, MSFT, GOOGL)."
-            )
-            st.markdown(
-                f"**SMA uptrend obrigatório: `{DEPLOYED_THRESHOLDS['require_sma_uptrend']}`**\n\n"
-                f"Requer SMA20 > SMA50 > SMA200 — momento técnico ascendente em três escalas."
-            )
+        st.markdown("**Filtros ativos** (aplicados em ordem, short-circuit no primeiro que falhar):")
+        for i, filter_name in enumerate(DEPLOYED_THRESHOLDS["active_filters"], 1):
+            description = FILTER_DESCRIPTIONS.get(filter_name, "(sem descrição)")
+            st.markdown(f"{i}. **`{filter_name}`** — {description}")
 
         st.markdown(
-            "\n_Configurados via env vars no `template.yaml`, ajustáveis sem redeploy de código._"
+            "\n_Configurados via env vars no `template.yaml`. Ligar/desligar filtro = editar "
+            "`ACTIVE_FILTERS` e rodar `sam deploy` (sem rebuild de imagem)._"
         )
 
 
