@@ -2,18 +2,19 @@
 
 # AlphaGen Daily
 
-**Fully autonomous serverless AI agent on AWS that screens AI-related US stocks every trading day and generates investment briefings powered by Amazon Bedrock.**
+**Serverless AI agent on AWS that screens AI-related US stocks every trading day and generates analytical briefings with Amazon Bedrock.**
 
 [![AWS](https://img.shields.io/badge/AWS-232F3E?style=flat&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
 [![Amazon Bedrock](https://img.shields.io/badge/Amazon%20Bedrock-Nova%20Lite-FF9900?style=flat&logo=amazon&logoColor=white)](https://aws.amazon.com/bedrock/)
 [![AWS SAM](https://img.shields.io/badge/IaC-AWS%20SAM-FF9900?style=flat&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/serverless/sam/)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Container%20Image-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![AWS Weekend Creative Agent Challenge](https://img.shields.io/badge/AWS-Weekend%20Creative%20Agent%20Challenge-232F3E?style=flat)](https://aws.amazon.com/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?style=flat&logo=streamlit&logoColor=white)](https://alphagen-daily.streamlit.app)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 **Live dashboard:** [https://alphagen-daily.streamlit.app](https://alphagen-daily.streamlit.app)
-**Repository:** [https://github.com/Ant4rez/Alphagen-Daily](https://github.com/Ant4rez/Alphagen-Daily)
+
+Built for the **AWS Weekend Creative Agent Challenge (August 2026)**.
 
 </div>
 
@@ -21,117 +22,137 @@
 
 ## TL;DR
 
-AlphaGen Daily runs autonomously every US trading day before market open. It fetches price history and fundamentals for a curated universe of **72 AI-related tickers**, applies **CANSLIM-inspired quantitative filters**, and asks **Amazon Bedrock (Nova Lite)** to generate a concise investment thesis and key risk for each approved ticker. The full pipeline runs end-to-end in **~72 seconds** and costs **less than US$ 1 per month**.
+Every US trading day, before the market opens, AlphaGen Daily downloads prices and fundamentals for a curated universe of **72 AI-related tickers**, applies **CANSLIM-inspired quantitative filters**, and asks **Amazon Bedrock (Nova Lite)** to write a short thesis and key risk for each approved ticker. The briefing is stored in S3 and DynamoDB, sent by email and exposed through a public HTTP API consumed by a Streamlit dashboard.
 
-Built as a submission to the **AWS Weekend Creative Agent Challenge (August 2026)**.
+No manual steps. No console. **~72 seconds per run** and an estimated **cost below US$ 1 per month**.
 
----
-
-## Screenshots
-
-> Streamlit dashboard consuming the public API — updated every trading day.
-
-_Add screenshots to `docs/screenshots/` and reference them here._
-
-`![Dashboard overview](docs/screenshots/dashboard.png)`
+> Learning and portfolio project. Nothing here is financial advice.
 
 ---
 
 ## Architecture
 
+![AlphaGen Daily architecture](docs/architecture.png)
+
+AlphaGen Daily is made of **two independent services** that share the same repository and the same Docker image, but run as separate Lambda functions:
+
+- **Screener:** daily batch pipeline. Downloads data, filters it, analyzes it with an LLM and persists the results.
+- **API:** on-demand reader of the persisted briefings.
+
+**10 AWS services**, all defined as Infrastructure as Code in a single AWS SAM template: Amazon EventBridge, AWS Lambda, Amazon ECR, Amazon Bedrock, Amazon S3, Amazon DynamoDB, Amazon SES, Amazon API Gateway, Amazon CloudWatch and AWS IAM.
+
+<details>
+<summary>Text version of the diagram (Mermaid)</summary>
+
 ```mermaid
 flowchart LR
-    A["EventBridge Scheduler<br/>weekdays, pre-market"] --> B["AWS Lambda<br/>Container Image"]
-    L["SSM Parameter Store<br/>runtime configuration"] --> B
-    B --> C["Universe Fetcher<br/>72 AI tickers"]
-    C --> D["CANSLIM Screener<br/>EPS Q/Q, EPS Y/Y, price, SMA"]
-    D --> E["Amazon Bedrock<br/>Nova Lite, cross-region"]
-    E --> F["Amazon S3<br/>daily briefings + latest.json"]
-    E --> G["Amazon DynamoDB<br/>last 60 executions"]
-    E --> H["Amazon SES<br/>email notification"]
-    F --> I["API Gateway HTTP<br/>/today and /history/{date}"]
-    I --> J["Streamlit Dashboard<br/>public consumer"]
-    B --> K["Amazon CloudWatch Logs<br/>structured JSON"]
+    CRON["Amazon EventBridge<br/>scheduled rule<br/>MON-FRI 12:00 UTC"] --> SCR["Lambda: screener<br/>container image, 1,536 MB"]
+    SCR --> YF["Yahoo Finance<br/>via yfinance"]
+    SCR --> BR["Amazon Bedrock<br/>Nova Lite (us. profile)"]
+    SCR --> S3["Amazon S3<br/>briefings/YYYY/MM/DD.json<br/>briefings/latest.json"]
+    SCR --> DDB["Amazon DynamoDB<br/>run history, TTL 90 days"]
+    SCR --> SES["Amazon SES<br/>daily email"]
+    WEB["Streamlit dashboard"] --> APIG["API Gateway HTTP<br/>/today and /history/{date}"]
+    CLIENT["HTTP clients"] --> APIG
+    APIG --> API["Lambda: api<br/>container image, 512 MB"]
+    API --> S3
+    SCR -.-> CW["Amazon CloudWatch Logs"]
+    API -.-> CW
 ```
 
-**Ten AWS services integrated as Infrastructure as Code with a single AWS SAM template.**
+</details>
 
-For a deeper dive on design decisions, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+For module contracts, data model, IAM map and trade-offs, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 
-## Features
+## How it works
 
-- **Fully autonomous.** No manual steps. No console. The agent runs itself on a cron schedule.
-- **Curated AI universe.** 72 US tickers across semiconductors, hyperscalers, enterprise AI SaaS, cloud data platforms, and AI infrastructure.
-- **CANSLIM-inspired screening.** Quantitative filters on earnings growth (Q/Q and Y/Y), price ceiling, and moving-average trend.
-- **LLM-generated investment thesis.** Each approved ticker gets a concise thesis and a key risk, generated by Amazon Bedrock Nova Lite using structured prompts.
-- **Output validation.** JSON output from the LLM is validated against a strict schema before persistence.
-- **Graceful failure handling.** Delisted or missing tickers are skipped without breaking the pipeline (verified in production with tickers such as `CFLT`, `JNPR`, `HCP`).
-- **Public HTTP API.** Consumers query `/today` for the latest briefing or `/history/{date}` for a specific day.
-- **Structured observability.** JSON logs in CloudWatch with request IDs, ticker counts, rejection reasons, and per-stage timing.
-- **Least-privilege IAM.** Each function scope has narrow permissions defined in SAM.
+The screener handler (`src/handler.py`) runs five sequential stages:
+
+| # | Stage | Module | What happens |
+|---|---|---|---|
+| 1 | **Fetch** | `fetcher.py` | One batched download of ~300 days of prices for all tickers, then fundamentals ticker by ticker. Each ticker becomes an immutable snapshot with SMA 20/50/200 and EPS growth. |
+| 2 | **Screen** | `screener.py` | Pluggable filters applied in order. Missing data means rejection. A counter per rejection reason is logged. |
+| 3 | **Analyze** | `analyzer.py` | Amazon Bedrock Converse API returns a JSON object with `thesis` and `key_risk` for each approved ticker. |
+| 4 | **Persist** | `storage.py` | Full briefing to S3 first (source of truth), then a metadata item to DynamoDB (index). |
+| 5 | **Notify** | `notifier.py` | HTML and plain-text email through Amazon SES. Optional, controlled by a flag. |
+
+Filters deployed in production:
+
+| Filter | Rule |
+|---|---|
+| `eps_qoq` | Quarter-over-quarter EPS growth ≥ 10% |
+| `eps_yoy` | Year-over-year EPS growth ≥ 15% |
+| `price_cap` | Price ≤ US$ 500 |
+| `sma20_gt_sma50` | SMA20 > SMA50 |
+| `sma50_gt_sma200` | SMA50 > SMA200 |
+
+Also available: `price_above_sma20` and `price_above_sma200`.
+
+---
+
+## Design principles
+
+- **Serverless first.** No long-running components. Idle cost is zero, and all state lives in S3 and DynamoDB.
+- **Degrade, never cascade.** A failing ticker is logged and skipped. A malformed LLM response never drops a ticker: a defensive parser handles markdown fences and empty fields, and falls back to a default text. An email failure never fails a run whose briefing is already persisted.
+- **Deterministic rules first, LLM second.** The screener decides which tickers move forward. The model only writes the narrative, so Bedrock usage scales with approved tickers, not with the whole universe.
+- **Guarded prompting.** A fixed system prompt frames the model as a disciplined equity research assistant, forbids invented numbers and forbids buy or sell recommendations (`temperature=0.4`, `maxTokens=400`).
+- **Configuration out of the code.** Every threshold and switch is an environment variable defined in `template.yaml`. No module reads `os.environ` directly: everything goes through one immutable `Config` object.
+- **One image, two functions.** Both Lambdas use the same container image. The SAM template only changes the entry point (`ImageConfig.Command`).
+- **Least privilege.** The screener can write to S3 and DynamoDB, call Bedrock and send email. The API function is read-only.
 
 ---
 
 ## Results and metrics
 
-Measured in production (CloudWatch, run of 2026-08-31):
+Measured in production (CloudWatch, run of **2026-08-31**):
 
 | Metric | Value |
 |---|---|
-| Universe size | 72 tickers |
-| Successfully fetched | 69 tickers |
-| Delisted / skipped | 3 tickers |
-| Approved by CANSLIM screener | 8 tickers |
-| Average approval rate | ~11% |
-| End-to-end Lambda duration | **~72 seconds** |
-| Billed Lambda duration | ~75 seconds |
-| Memory provisioned | 1,536 MB |
-| Peak memory used | 223 MB |
-| Init duration (cold start) | ~2.8 seconds |
-| Bedrock invocation time per ticker | ~1.2 seconds |
+| Tickers requested | 72 |
+| Successfully fetched | 69 |
+| Delisted or unavailable (skipped) | 3 (`CFLT`, `JNPR`, `HCP`) |
+| Approved by the screener | 8 (~11%) |
+| End-to-end duration | **~72 s** |
+| Billed duration | ~75 s |
+| Init duration (cold start) | ~2.8 s |
+| Memory provisioned / peak used | 1,536 MB / 223 MB |
 | **Estimated monthly cost** | **< US$ 1** |
 
-Sample approved tickers (2026-08-31): `AMZN`, `ANET`, `AVGO`, `DELL`, `FTNT`, `GOOGL`, `NVDA`, `OKTA`.
+Approved tickers that day: `AMZN`, `ANET`, `AVGO`, `DELL`, `FTNT`, `GOOGL`, `NVDA`, `OKTA`.
 
-Rejection breakdown per screening rule (same run):
+Rejections per filter (same run):
 
-| Rule | Rejected |
+| Filter | Rejected |
 |---|---|
-| EPS Q/Q growth | 33 |
-| Simple Moving Average uptrend | 22 |
+| EPS growth, quarter over quarter | 33 |
+| Moving-average uptrend | 22 |
 | Price ceiling | 5 |
-| EPS Y/Y growth | 1 |
+| EPS growth, year over year | 1 |
 
 ---
 
 ## Tech stack
 
-**Cloud and Runtime**
-- AWS Lambda (Docker Container Image, Python 3.11)
-- Amazon EventBridge Scheduler
-- Amazon Bedrock (Nova Lite with cross-region inference profile)
-- Amazon S3, Amazon DynamoDB
-- Amazon API Gateway HTTP
+**AWS**
+- AWS Lambda (container images, Python 3.11) and Amazon ECR
+- Amazon EventBridge (scheduled rule)
+- Amazon Bedrock (Amazon Nova Lite through the `us.` cross-region inference profile, Converse API)
+- Amazon S3 (SSE-S3, versioning, public access blocked)
+- Amazon DynamoDB (on-demand, TTL)
+- Amazon API Gateway (HTTP API)
 - Amazon SES
 - Amazon CloudWatch Logs
-- AWS Systems Manager Parameter Store
-- AWS Identity and Access Management (IAM)
-
-**Infrastructure as Code**
-- AWS SAM (single template, ten services)
-- Docker (multi-stage build for Lambda Container Image)
+- AWS IAM
+- AWS SAM / AWS CloudFormation
 
 **Application**
-- Python 3.11
-- `boto3` for AWS SDK
-- `yfinance` for market data
-- `pandas` for data manipulation
-- Custom prompt engineering utilities
+- Python 3.11, `boto3`, `yfinance`, `pandas`
+- Structured JSON logging (`src/utils/logger.py`)
 
-**Frontend consumer**
-- Streamlit dashboard (`web/`), consuming the public API
+**Dashboard**
+- Streamlit on Streamlit Community Cloud, Plotly charts (`web/app.py`)
 
 ---
 
@@ -139,25 +160,29 @@ Rejection breakdown per screening rule (same run):
 
 ```
 Alphagen-Daily/
-├── docs/                    Additional documentation and diagrams
-├── infrastructure/          AWS SAM template and deploy scripts
-├── src/                     Lambda source code
-│   ├── handler.py           Entry point
-│   ├── fetcher.py           Universe download and normalization
-│   ├── screener.py          CANSLIM filters
-│   ├── analyzer.py          Bedrock invocation and validation
-│   ├── storage.py           S3 and DynamoDB persistence
-│   └── notifier.py          SES email delivery
-├── tests/                   Unit tests
-├── web/                     Streamlit dashboard
-├── ARCHITECTURE.md          System design deep dive
-├── CONTEXT.md               Product context and goals
-├── CONTRIBUTING.md          Contribution guidelines
-├── Dockerfile               Lambda Container Image build
-├── Makefile                 Deploy and utility targets
-├── requirements.txt         Runtime dependencies
-├── requirements-dev.txt     Development dependencies
-└── README.md                This file
+├── infrastructure/
+│   ├── template.yaml          SAM template (source of truth for the infrastructure)
+│   ├── samconfig.toml         SAM CLI configuration
+│   └── parameters/            Environment parameters
+├── src/
+│   ├── handler.py             Screener entry point (orchestrates the 5 stages)
+│   ├── api_handler.py         API entry point (/today and /history/{date})
+│   ├── fetcher.py             Prices and fundamentals via yfinance
+│   ├── screener.py            Pluggable CANSLIM-inspired filters
+│   ├── analyzer.py            Bedrock Converse call and defensive parsing
+│   ├── storage.py             S3 and DynamoDB persistence
+│   ├── notifier.py            HTML and plain-text email via SES
+│   ├── models/                Ticker, ScreeningResult and DailyBriefing dataclasses
+│   ├── universe/              Curated AI ticker universe
+│   └── utils/                 Config loader and JSON logger
+├── web/                       Streamlit dashboard (own requirements.txt)
+├── tests/                     Unit tests
+├── docs/                      Images and additional documentation
+├── ARCHITECTURE.md            Technical deep dive
+├── CONTEXT.md                 Product context and decisions
+├── Dockerfile                 Shared image for both Lambda functions
+├── Makefile                   Test and deploy shortcuts
+└── requirements.txt           Backend dependencies
 ```
 
 ---
@@ -166,12 +191,11 @@ Alphagen-Daily/
 
 **Prerequisites**
 - AWS account with Amazon Bedrock model access enabled for Nova Lite
-- AWS CLI configured with a profile that has deployment permissions
-- AWS SAM CLI installed
-- Docker installed and running
+- AWS CLI configured
+- AWS SAM CLI and Docker installed
 - Python 3.11
 
-**Clone and set up local environment**
+**Local setup and tests**
 
 ```bash
 git clone https://github.com/Ant4rez/Alphagen-Daily.git
@@ -182,63 +206,71 @@ source .venv/bin/activate            # Linux / macOS
 # .venv\Scripts\activate              # Windows
 
 pip install -r requirements.txt -r requirements-dev.txt
-```
-
-**Run tests**
-
-```bash
 make test
 ```
 
-**Deploy to AWS**
+**Deploy**
 
 ```bash
 make deploy
 ```
 
-The Makefile wraps `sam build` and `sam deploy` with sensible defaults. See [`infrastructure/`](infrastructure/) for the SAM template and parameter files.
+Or directly with the SAM CLI:
+
+```bash
+cd infrastructure
+sam build --use-container
+sam deploy
+```
+
+The first deploy asks for the stack parameters (`Environment`, `BedrockModelId`, `ScheduleExpression`, SES settings) and saves them in `samconfig.toml`. If only environment variables changed, `sam deploy` alone updates the functions without rebuilding the image.
 
 ---
 
 ## Configuration
 
-Runtime configuration lives in AWS Systems Manager Parameter Store, not in code. This lets you tune the agent without redeploying.
+All configuration comes from environment variables defined in `infrastructure/template.yaml` and loaded by `src/utils/config.py`.
 
-Key parameters:
+| Variable | Deployed value | Purpose |
+|---|---|---|
+| `BEDROCK_MODEL_ID` | `us.amazon.nova-lite-v1:0` | Bedrock model (cross-region inference profile) |
+| `BEDROCK_MAX_TOKENS` | `400` | Response token limit |
+| `BEDROCK_TEMPERATURE` | `0.4` | Sampling temperature |
+| `MIN_EPS_GROWTH_QOQ` | `10` | Minimum quarter-over-quarter EPS growth (%) |
+| `MIN_EPS_GROWTH_YOY` | `15` | Minimum year-over-year EPS growth (%) |
+| `MAX_PRICE` | `500` | Maximum price (US$) |
+| `ACTIVE_FILTERS` | `eps_qoq,eps_yoy,price_cap,sma20_gt_sma50,sma50_gt_sma200` | Filters applied, in order |
+| `NOTIFY_ENABLED` | `true` | Master switch for email |
+| `SES_SENDER` / `SES_RECIPIENTS` | set at deploy time | Verified SES sender and recipients |
+| `LOG_LEVEL` | `INFO` | Log level |
 
-| Parameter | Purpose |
-|---|---|
-| `min_eps_qoq` | Minimum quarter-over-quarter EPS growth (%) |
-| `min_eps_yoy` | Minimum year-over-year EPS growth (%) |
-| `max_price` | Maximum ticker price (US$) |
-| `require_sma_uptrend` | Enforce short SMA above long SMA |
-| `universe_size` | Number of tickers in the curated universe |
-| `notify_enabled` | Toggle SES email delivery |
-
-Sensitive values (Bedrock region, SES sender) live in SAM parameters and are injected as Lambda environment variables at deploy time.
+The schedule is the `ScheduleExpression` parameter: `cron(0 12 ? * MON-FRI *)`, which is 12:00 UTC (09:00 in Brazil) on weekdays.
 
 ---
 
 ## Public API
 
-Base URL is provisioned by API Gateway at deploy time and returned in the SAM outputs.
+The base URL is returned in the stack outputs (`ApiEndpoint`).
 
-- `GET /today` — returns the latest briefing (JSON)
-- `GET /history/{date}` — returns the briefing for a specific date (`YYYY-MM-DD`)
+| Method | Path | Response |
+|---|---|---|
+| GET | `/today` | Latest briefing (`briefings/latest.json`) |
+| GET | `/history/{YYYY-MM-DD}` | Briefing for a given date |
 
-Sample response:
+Status codes: `200` success, `400` invalid date format, `404` briefing not found. Responses are always JSON with CORS enabled.
+
+Simplified response shape:
 
 ```json
 {
   "run_date": "2026-08-31",
-  "universe_size": 72,
   "approved_count": 8,
-  "approved": [
+  "results": [
     {
-      "symbol": "NVDA",
-      "price": 128.45,
+      "ticker": { "symbol": "NVDA", "...": "..." },
       "thesis": "…",
-      "key_risk": "…"
+      "key_risk": "…",
+      "llm_model": "us.amazon.nova-lite-v1:0"
     }
   ]
 }
@@ -246,38 +278,58 @@ Sample response:
 
 ---
 
+## Observability
+
+Every log line is a compact JSON object, which makes CloudWatch Logs Insights queries straightforward. Example, daily approved count:
+
+```
+fields @timestamp, approved_count
+| filter message = "AlphaGen Daily run complete"
+| sort @timestamp desc
+```
+
+More queries in [`ARCHITECTURE.md`](ARCHITECTURE.md#11-observabilidade).
+
+---
+
+## Known limitations
+
+- **Serial fetch is the bottleneck** (about 40 s per run). Parallel requests were tried, but the data source rate-limits datacenter IPs.
+- **No retry on Bedrock throttling.** A failed call falls back to a default text instead of retrying.
+- **Minimal test coverage.** Tests for the screener rules and the LLM parser are the next priority.
+- **Static universe.** Adding a ticker requires a code change and a redeploy.
+
+---
+
 ## Roadmap
 
-- [ ] Add Brazilian market (B3) support with adjusted CANSLIM thresholds
-- [ ] Add sentiment layer from news headlines
-- [ ] Add Slack delivery via Amazon SNS
-- [ ] Add multi-strategy screening (value, dividend, quality)
-- [ ] Add backtest module for historical validation
-- [ ] Migrate deploy pipeline to GitHub Actions (CI/CD)
-- [ ] Optimize Lambda memory from 1,536 MB to 512 MB (peak usage is 223 MB)
+- [ ] Right-size screener memory (1,536 MB to 512 MB; peak usage is 223 MB)
+- [ ] Retry with exponential backoff on Bedrock throttling
+- [ ] Unit tests for `screener.py` and the LLM response parser
+- [ ] CI/CD with GitHub Actions
+- [ ] CloudWatch alarms and API throttling
+- [ ] Brazilian market (B3) support with adjusted thresholds
+- [ ] Sentiment layer from news headlines
+- [ ] Backtest module for historical validation
 
 ---
 
 ## Contributing
 
-Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for guidelines. Bugs, suggestions, and pull requests can be opened via the Issues tab.
+Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md). Bugs and suggestions can be opened in the Issues tab.
 
 ---
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE).
 
 ---
 
 ## Author
 
 **Thiago Fiel de Oliveira**
-Data Science student at FIAP · AWS Certified AI Practitioner
-[LinkedIn](https://www.linkedin.com/in/thiagofieldeoliveira) · [GitHub](https://github.com/Ant4rez)
-
-Built as a submission to the **AWS Weekend Creative Agent Challenge (August 2026)**.
-
+Data Science student at FIAP · AWS Certified AI Practitioner · AWS re/Start graduate
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/thiagofieldeoliveira/)
 [![GitHub](https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/Ant4rez)
