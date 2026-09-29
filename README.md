@@ -1,3 +1,5 @@
+<div align="center">
+
 # AlphaGen Daily
 
 **Fully autonomous serverless AI agent on AWS that screens AI-related US stocks every trading day and generates investment briefings powered by Amazon Bedrock.**
@@ -39,17 +41,17 @@ _Add screenshots to `docs/screenshots/` and reference them here._
 
 ```mermaid
 flowchart LR
-    A[EventBridge Scheduler<br/>weekdays, pre-market] --> B[AWS Lambda<br/>Container Image]
-    L[SSM Parameter Store<br/>runtime configuration] --> B
-    B --> C[Universe Fetcher<br/>72 AI tickers]
-    C --> D[CANSLIM Screener<br/>EPS Q/Q, EPS Y/Y, price, SMA]
-    D --> E[Amazon Bedrock<br/>Nova Lite - cross-region]
-    E --> F[Amazon S3<br/>daily briefings + latest.json]
-    E --> G[Amazon DynamoDB<br/>last 60 executions]
-    E --> H[Amazon SES<br/>email notification]
-    F --> I[API Gateway HTTP<br/>/today, /history/&#123;date&#125;]
-    I --> J[Streamlit Dashboard<br/>public consumer]
-    B --> K[Amazon CloudWatch Logs<br/>structured JSON]
+    A["EventBridge Scheduler<br/>weekdays, pre-market"] --> B["AWS Lambda<br/>Container Image"]
+    L["SSM Parameter Store<br/>runtime configuration"] --> B
+    B --> C["Universe Fetcher<br/>72 AI tickers"]
+    C --> D["CANSLIM Screener<br/>EPS Q/Q, EPS Y/Y, price, SMA"]
+    D --> E["Amazon Bedrock<br/>Nova Lite, cross-region"]
+    E --> F["Amazon S3<br/>daily briefings + latest.json"]
+    E --> G["Amazon DynamoDB<br/>last 60 executions"]
+    E --> H["Amazon SES<br/>email notification"]
+    F --> I["API Gateway HTTP<br/>/today and /history/{date}"]
+    I --> J["Streamlit Dashboard<br/>public consumer"]
+    B --> K["Amazon CloudWatch Logs<br/>structured JSON"]
 ```
 
 **Ten AWS services integrated as Infrastructure as Code with a single AWS SAM template.**
@@ -272,8 +274,14 @@ MIT — see [`LICENSE`](LICENSE).
 
 **Thiago Fiel de Oliveira**
 Data Science student at FIAP · AWS Certified AI Practitioner
+[LinkedIn](https://www.linkedin.com/in/thiagofieldeoliveira) · [GitHub](https://github.com/Ant4rez)
+
+Built as a submission to the **AWS Weekend Creative Agent Challenge (August 2026)**.
+
+## Autor
+
+**Thiago Fiel de Oliveira**
+Cursando Tecnólogo em Ciência de Dados na FIAP · AWS Certified AI Practitioner
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/thiagofieldeoliveira/)
 [![GitHub](https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/Ant4rez)
-
-Built as a submission to the **AWS Weekend Creative Agent Challenge (August 2026)**.
