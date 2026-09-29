@@ -278,10 +278,6 @@ Data Science student at FIAP · AWS Certified AI Practitioner
 
 Built as a submission to the **AWS Weekend Creative Agent Challenge (August 2026)**.
 
-## Autor
-
-**Thiago Fiel de Oliveira**
-Cursando Tecnólogo em Ciência de Dados na FIAP · AWS Certified AI Practitioner
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/thiagofieldeoliveira/)
 [![GitHub](https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/Ant4rez)
